@@ -102,6 +102,7 @@ class Locataire(Base):
     telephone = Column(String, nullable=True)
     piece_identite = Column(String, nullable=True)
     contact_urgence = Column(String, nullable=True)
+    archive = Column(Boolean, default=False)  # ancien locataire conservé pour l'historique par maison
 
     baux = relationship("Bail", back_populates="locataire")
 
@@ -203,6 +204,7 @@ try:
 
     _add_column_if_missing("maisons", "proprietaire_id", "INTEGER")
     _add_column_if_missing("paiements", "verification_code", "VARCHAR")
+    _add_column_if_missing("locataires", "archive", "BOOLEAN")
 except Exception:
     pass
 
@@ -254,6 +256,7 @@ class LocataireIn(BaseModel):
 class LocataireOut(LocataireIn):
     model_config = ConfigDict(from_attributes=True)
     id: int
+    archive: bool = False
 
 
 class BailIn(BaseModel):
@@ -568,13 +571,47 @@ def delete_locataire(locataire_id: int, db: Session = Depends(get_db), _: User =
     locataire = db.query(Locataire).get(locataire_id)
     if not locataire:
         raise HTTPException(404, "Locataire introuvable")
+    a_des_baux = db.query(Bail).filter(Bail.locataire_id == locataire_id).first() is not None
+    if a_des_baux:
+        # On ne supprime pas réellement : on archive, pour conserver la trace de ce locataire
+        # dans l'historique des occupants de la ou des maisons concernées.
+        locataire.archive = True
+        db.commit()
+        return {"ok": True, "archive": True}
     try:
         db.delete(locataire)
         db.commit()
     except IntegrityError:
         db.rollback()
-        raise HTTPException(409, "Impossible de supprimer ce locataire : il a encore des baux liés. Supprimez-les d'abord.")
-    return {"ok": True}
+        raise HTTPException(409, "Impossible de supprimer ce locataire.")
+    return {"ok": True, "archive": False}
+
+
+# ---------- Historique des locataires (anciens occupants) ----------
+@app.get("/api/historique-locataires")
+def historique_locataires(maison_id: Optional[int] = None, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    q = db.query(Bail).join(Locataire, Bail.locataire_id == Locataire.id).filter(Locataire.archive == True)
+    if current_user.role == "proprietaire":
+        maison_ids = owned_maison_ids(db, current_user)
+        q = q.filter(Bail.maison_id.in_(maison_ids))
+    if maison_id:
+        q = q.filter(Bail.maison_id == maison_id)
+    resultats = []
+    for bail in q.order_by(Bail.date_debut.desc()).all():
+        loc = db.query(Locataire).get(bail.locataire_id)
+        maison = db.query(Maison).get(bail.maison_id)
+        resultats.append({
+            "locataire_id": loc.id if loc else None,
+            "nom": loc.nom if loc else "—",
+            "telephone": loc.telephone if loc else None,
+            "piece_identite": loc.piece_identite if loc else None,
+            "maison_id": bail.maison_id,
+            "adresse": maison.adresse if maison else "—",
+            "date_debut": bail.date_debut,
+            "date_fin": bail.date_fin,
+            "statut_bail": bail.statut,
+        })
+    return resultats
 
 
 # ---------- Baux ----------
@@ -902,7 +939,12 @@ def quittance_pdf(paiement_id: int, request: Request, db: Session = Depends(get_
         db.commit()
         db.refresh(paiement)
 
-    base_url = str(request.base_url).rstrip("/")
+    # Render termine le HTTPS au niveau du proxy et transmet la requête en HTTP en interne :
+    # sans ceci, l'URL encodée dans le QR code commence par http:// (non sécurisé), ce qui
+    # déclenche l'avertissement "site dangereux" de certains scanners de QR code.
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+    host = request.headers.get("x-forwarded-host", request.headers.get("host", request.url.netloc))
+    base_url = f"{proto}://{host}"
     verify_url = f"{base_url}/verifier.html?code={paiement.verification_code}"
 
     buffer = generer_quittance_pdf(paiement, bail, maison, locataire, verify_url)

@@ -260,6 +260,7 @@
     <button data-view="depenses" id="nav-depenses" class="hidden">💸 Dépenses</button>
     <button data-view="observations">✉️ Observations<span id="obs-badge" class="nav-badge hidden">0</span></button>
     <button data-view="bilan" id="nav-bilan" class="hidden">📈 Bilan</button>
+    <button data-view="historique">🗂️ Historique</button>
     <button data-view="utilisateurs" id="nav-utilisateurs" class="hidden">🔑 Utilisateurs</button>
   </nav>
 
@@ -377,9 +378,11 @@
       </div>
       <div class="panel">
         <div class="panel-header"><strong>Historique des paiements</strong></div>
-        <table><thead><tr><th>Bail</th><th>Mois</th><th>Montant</th><th>Mode</th><th>Statut</th><th></th></tr></thead>
+        <div style="margin-bottom:12px;"><label>Choisir une maison</label><select id="paiements-maison-select"><option value="">— Sélectionnez une maison —</option></select></div>
+        <table id="paiements-table" class="hidden"><thead><tr><th>Bail</th><th>Mois</th><th>Montant</th><th>Mode</th><th>Statut</th><th></th></tr></thead>
           <tbody id="paiements-list"></tbody>
         </table>
+        <div class="empty-note" id="paiements-empty-note">Choisissez une maison ci-dessus pour afficher son historique de paiements.</div>
       </div>
     </section>
 
@@ -474,6 +477,21 @@
           <div class="tag" id="bilan-analyse-tag">Analyse</div>
           <div id="bilan-analyse-texte"></div>
         </div>
+      </div>
+    </section>
+
+    <!-- HISTORIQUE -->
+    <section class="view" id="view-historique">
+      <div class="page-title"><div class="bar"></div><h2>Historique des locataires</h2></div>
+      <div class="panel">
+        <div class="panel-header"><strong>Filtrer par maison</strong></div>
+        <select id="historique-maison-select"><option value="">Toutes les maisons</option></select>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><strong>Anciens occupants</strong></div>
+        <table><thead><tr><th>Maison</th><th>Locataire</th><th>Téléphone</th><th>Période</th><th>Bail</th></tr></thead>
+          <tbody id="historique-list"></tbody>
+        </table>
       </div>
     </section>
 
@@ -601,6 +619,8 @@ document.getElementById("main-nav").addEventListener("click", (e) => {
 function showView(name) {
   document.querySelectorAll("nav button").forEach(b => b.classList.toggle("active", b.dataset.view === name));
   document.querySelectorAll(".view").forEach(v => v.classList.toggle("active", v.id === "view-" + name));
+  if (name === "dashboard") renderDashboard();
+  if (name === "historique") chargerHistorique();
 }
 
 // ---------- Data loading ----------
@@ -613,7 +633,7 @@ async function refreshAll() {
   if (isGerant) { calls.push(apiFetch("/users")); calls.push(apiFetch("/depenses")); }
   const [maisons, locataires, baux, paiements, tickets, observations, users, depenses] = await Promise.all(calls);
   CACHE = { maisons, locataires, baux, paiements, tickets, users: users || [], depenses: depenses || [], observations: observations || [] };
-  renderDashboard();
+  if (document.getElementById("view-dashboard").classList.contains("active")) renderDashboard();
   renderMaisons();
   renderLocataires();
   renderBaux();
@@ -775,7 +795,8 @@ function annulerEditLocataire() {
 }
 
 function renderLocataires() {
-  document.getElementById("locataires-list").innerHTML = CACHE.locataires.map(l => `
+  const actifs = CACHE.locataires.filter(l => !l.archive);
+  document.getElementById("locataires-list").innerHTML = actifs.map(l => `
     <tr>
       <td>${l.nom}</td><td>${l.telephone || "—"}</td><td>${l.piece_identite || "—"}</td><td>${l.contact_urgence || "—"}</td>
       <td class="actions-row gerant-only ${ME && ME.role !== 'gerant' ? 'hidden' : ''}">
@@ -844,13 +865,36 @@ document.getElementById("form-paiement").addEventListener("submit", async (e) =>
 });
 
 function renderPaiements() {
-  document.getElementById("paiements-list").innerHTML = CACHE.paiements.map(p => `
+  const select = document.getElementById("paiements-maison-select");
+  const table = document.getElementById("paiements-table");
+  const emptyNote = document.getElementById("paiements-empty-note");
+  const maisonId = select ? select.value : "";
+
+  if (!maisonId) {
+    if (table) table.classList.add("hidden");
+    if (emptyNote) { emptyNote.classList.remove("hidden"); emptyNote.textContent = "Choisissez une maison ci-dessus pour afficher son historique de paiements."; }
+    document.getElementById("paiements-list").innerHTML = "";
+    return;
+  }
+
+  const bailIdsMaison = new Set(CACHE.baux.filter(b => b.maison_id === Number(maisonId)).map(b => b.id));
+  const paiementsMaison = CACHE.paiements.filter(p => bailIdsMaison.has(p.bail_id));
+
+  if (table) table.classList.remove("hidden");
+  if (emptyNote) emptyNote.classList.add("hidden");
+
+  document.getElementById("paiements-list").innerHTML = paiementsMaison.map(p => `
     <tr>
-      <td>#${p.bail_id} — ${maisonAdresse(CACHE.baux.find(b => b.id === p.bail_id)?.maison_id)}</td>
+      <td>#${p.bail_id} — ${locataireNom(CACHE.baux.find(b => b.id === p.bail_id)?.locataire_id)}</td>
       <td>${p.mois_concerne}</td><td>${p.montant}</td><td>${p.mode.replace("_"," ")}</td><td>${badge(p.statut)}</td>
       <td class="actions-row"><button class="secondary" onclick="telechargerQuittance(${p.id})">📄 Quittance PDF</button></td>
-    </tr>`).join("") || `<tr><td colspan="6" class="empty-note">Aucun paiement</td></tr>`;
+    </tr>`).join("") || `<tr><td colspan="6" class="empty-note">Aucun paiement pour cette maison</td></tr>`;
 }
+
+document.addEventListener("change", (e) => {
+  if (e.target && e.target.id === "paiements-maison-select") renderPaiements();
+  if (e.target && e.target.id === "historique-maison-select") chargerHistorique();
+});
 
 async function telechargerQuittance(paiementId) {
   const res = await fetch(`${API}/paiements/${paiementId}/quittance`, { headers: authHeaders() });
@@ -1073,7 +1117,7 @@ async function genererBilan() {
 // ---------- Selecteurs ----------
 function fillSelectors() {
   const maisonOptions = CACHE.maisons.map(m => `<option value="${m.id}">${m.adresse}</option>`).join("");
-  const locataireOptions = CACHE.locataires.map(l => `<option value="${l.id}">${l.nom}</option>`).join("");
+  const locataireOptions = CACHE.locataires.filter(l => !l.archive).map(l => `<option value="${l.id}">${l.nom}</option>`).join("");
   const bailOptions = CACHE.baux.filter(b => b.statut === "actif").map(b => `<option value="${b.id}">#${b.id} — ${maisonAdresse(b.maison_id)} / ${locataireNom(b.locataire_id)}</option>`).join("");
   const proprietaireOptions = CACHE.users.filter(u => u.role === "proprietaire").map(u => `<option value="${u.id}">${u.nom}</option>`).join("");
 
@@ -1084,6 +1128,8 @@ function fillSelectors() {
   const paiementBail = document.getElementById("paiement-bail-select");
   const maisonProprietaire = document.getElementById("maison-proprietaire-select");
   const observationMaison = document.getElementById("observation-maison-select");
+  const paiementsMaisonFiltre = document.getElementById("paiements-maison-select");
+  const historiqueMaisonFiltre = document.getElementById("historique-maison-select");
 
   if (bailMaison) bailMaison.innerHTML = maisonOptions;
   if (bailLocataire) bailLocataire.innerHTML = locataireOptions;
@@ -1092,6 +1138,35 @@ function fillSelectors() {
   if (paiementBail) paiementBail.innerHTML = bailOptions;
   if (maisonProprietaire) maisonProprietaire.innerHTML = `<option value="">— Aucun (libre) —</option>` + proprietaireOptions;
   if (observationMaison) observationMaison.innerHTML = `<option value="">—</option>` + maisonOptions;
+  if (paiementsMaisonFiltre) {
+    const val = paiementsMaisonFiltre.value;
+    paiementsMaisonFiltre.innerHTML = `<option value="">— Sélectionnez une maison —</option>` + maisonOptions;
+    paiementsMaisonFiltre.value = val;
+  }
+  if (historiqueMaisonFiltre) {
+    const val = historiqueMaisonFiltre.value;
+    historiqueMaisonFiltre.innerHTML = `<option value="">Toutes les maisons</option>` + maisonOptions;
+    historiqueMaisonFiltre.value = val;
+  }
+}
+
+// ---------- Historique des locataires (anciens occupants) ----------
+async function chargerHistorique() {
+  const select = document.getElementById("historique-maison-select");
+  const maisonId = select ? select.value : "";
+  const tbody = document.getElementById("historique-list");
+  if (!tbody) return;
+  try {
+    const data = await apiFetch(`/historique-locataires${maisonId ? `?maison_id=${maisonId}` : ""}`);
+    tbody.innerHTML = data.map(h => `
+      <tr>
+        <td>${h.adresse}</td><td>${h.nom}</td><td>${h.telephone || "—"}</td>
+        <td>${h.date_debut || "—"} → ${h.date_fin || "—"}</td>
+        <td>${badge(h.statut_bail)}</td>
+      </tr>`).join("") || `<tr><td colspan="5" class="empty-note">Aucun ancien locataire pour le moment</td></tr>`;
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="5" class="empty-note">Erreur : ${err.message}</td></tr>`;
+  }
 }
 
 // ---------- Suppression générique ----------
