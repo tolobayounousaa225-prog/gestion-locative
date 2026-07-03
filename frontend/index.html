@@ -3,98 +3,224 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Gestion Locative</title>
+<title>TOURÉ IMMOBILIER — Gestion Locative</title>
 <style>
   :root {
-    --bg: #f4f6f8;
+    --bg: #eef1f5;
     --card: #ffffff;
-    --primary: #2563eb;
-    --primary-dark: #1d4ed8;
-    --text: #1f2937;
-    --muted: #6b7280;
-    --border: #e5e7eb;
+    --navy: #12314F;
+    --navy-dark: #0B1F35;
+    --gold: #C9A227;
+    --gold-light: #E8CE7A;
+    --primary: #12314F;
+    --primary-dark: #0B1F35;
+    --text: #1F2937;
+    --muted: #6B7280;
+    --border: #E2E6EB;
     --danger: #dc2626;
     --ok: #16a34a;
     --warn: #d97706;
   }
   * { box-sizing: border-box; }
-  body { margin: 0; font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif; background: var(--bg); color: var(--text); }
-  #login-screen { display: flex; align-items: center; justify-content: center; height: 100vh; }
-  .login-box { background: var(--card); padding: 32px; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,.08); width: 320px; }
-  .login-box h1 { font-size: 20px; margin-bottom: 20px; }
-  input, select, textarea { width: 100%; padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; margin-bottom: 10px; }
-  button { cursor: pointer; border: none; border-radius: 8px; padding: 9px 14px; font-size: 14px; background: var(--primary); color: white; }
-  button:hover { background: var(--primary-dark); }
-  button.secondary { background: #e5e7eb; color: var(--text); }
+  body {
+    margin: 0; font-family: 'Segoe UI', -apple-system, Roboto, Arial, sans-serif;
+    background: var(--bg); color: var(--text);
+  }
+  a { color: inherit; }
+
+  /* ---------- LOGIN ---------- */
+  #login-screen {
+    display: flex; align-items: center; justify-content: center; min-height: 100vh;
+    background:
+      linear-gradient(160deg, rgba(11,31,53,.93), rgba(18,49,79,.88)),
+      repeating-linear-gradient(45deg, rgba(255,255,255,.03) 0 2px, transparent 2px 40px);
+    position: relative; overflow: hidden;
+  }
+  #login-screen::before {
+    content: "";
+    position: absolute; inset: 0;
+    background-image:
+      radial-gradient(circle at 15% 20%, rgba(201,162,39,.15), transparent 40%),
+      radial-gradient(circle at 85% 80%, rgba(201,162,39,.12), transparent 45%);
+  }
+  .login-wrap { position: relative; display: flex; width: 860px; max-width: 92vw; border-radius: 18px; overflow: hidden; box-shadow: 0 25px 60px rgba(0,0,0,.35); }
+  .login-brand {
+    flex: 1.1; background: linear-gradient(200deg, var(--navy-dark), var(--navy) 70%);
+    color: #fff; padding: 44px 38px; display: flex; flex-direction: column; justify-content: center; position: relative;
+  }
+  .login-brand .skyline { position: absolute; left: 0; right: 0; bottom: 0; height: 70px; opacity: .5; }
+  .brand-badge { display:flex; align-items:center; gap:10px; margin-bottom: 22px; }
+  .brand-badge .icon-box {
+    width: 46px; height: 46px; border-radius: 12px; background: linear-gradient(135deg, var(--gold), #a8811c);
+    display:flex; align-items:center; justify-content:center; font-size: 22px; box-shadow: 0 4px 14px rgba(201,162,39,.4);
+  }
+  .brand-badge .brand-text { line-height: 1.15; }
+  .brand-badge .brand-text .name { font-weight: 800; font-size: 19px; letter-spacing: .5px; }
+  .brand-badge .brand-text .sub { font-size: 11px; color: var(--gold-light); letter-spacing: .5px; text-transform: uppercase; }
+  .login-brand h2 { font-size: 26px; line-height: 1.35; margin: 10px 0 14px; font-weight: 700; }
+  .login-brand p { font-size: 13.5px; color: #cbd8e6; line-height: 1.6; margin: 0 0 22px; }
+  .login-stats { display: flex; gap: 22px; margin-top: auto; padding-top: 18px; border-top: 1px solid rgba(255,255,255,.15); }
+  .login-stats div .n { font-weight: 800; font-size: 20px; color: var(--gold-light); }
+  .login-stats div .l { font-size: 10.5px; color: #9fb2c6; text-transform: uppercase; letter-spacing: .4px; }
+
+  .login-box { flex: 1; background: var(--card); padding: 44px 40px; display: flex; flex-direction: column; justify-content: center; }
+  .login-box h1 { font-size: 21px; margin: 0 0 4px; color: var(--navy); }
+  .login-box .hint { font-size: 12.5px; color: var(--muted); margin-bottom: 22px; }
+  input, select, textarea {
+    width: 100%; padding: 10px 12px; border: 1.5px solid var(--border); border-radius: 9px;
+    font-size: 14px; margin-bottom: 12px; background: #fbfcfd; transition: border-color .15s;
+  }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--gold); background: #fff; }
+  label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 4px; font-weight: 600; }
+  button {
+    cursor: pointer; border: none; border-radius: 9px; padding: 10px 16px; font-size: 14px;
+    background: var(--navy); color: white; font-weight: 600; transition: background .15s, transform .1s;
+  }
+  button:hover { background: var(--navy-dark); }
+  button:active { transform: translateY(1px); }
+  button.secondary { background: #eef1f5; color: var(--text); }
+  button.secondary:hover { background: #e2e6eb; }
   button.danger { background: var(--danger); }
-  .error { color: var(--danger); font-size: 13px; margin-bottom: 8px; }
+  button.gold { background: linear-gradient(135deg, var(--gold), #a8811c); color: #2b2100; }
+  .error { color: var(--danger); font-size: 13px; margin-bottom: 10px; background: #fef2f2; padding: 8px 10px; border-radius: 8px; }
 
-  #app { display: none; }
-  header { background: var(--card); border-bottom: 1px solid var(--border); padding: 12px 24px; display: flex; align-items: center; justify-content: space-between; }
-  header h1 { font-size: 18px; margin: 0; }
-  nav { display: flex; gap: 6px; padding: 10px 24px; background: var(--card); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
-  nav button { background: transparent; color: var(--muted); }
-  nav button.active { background: var(--primary); color: white; }
-  main { padding: 24px; max-width: 1100px; margin: 0 auto; }
+  /* ---------- APP SHELL ---------- */
+  #app { display: none; min-height: 100vh; }
+  header {
+    background: linear-gradient(120deg, var(--navy-dark), var(--navy));
+    color: #fff; padding: 14px 26px; display: flex; align-items: center; justify-content: space-between;
+    box-shadow: 0 2px 10px rgba(0,0,0,.12);
+  }
+  header .brand-badge { margin-bottom: 0; }
+  header .brand-badge .icon-box { width: 38px; height: 38px; font-size: 18px; border-radius: 10px; }
+  header .brand-badge .name { font-size: 16px; }
+  header .brand-badge .sub { font-size: 9.5px; }
+  .header-right { display: flex; align-items: center; gap: 14px; }
+  .user-chip { font-size: 12.5px; color: #d7e2ee; text-align: right; line-height: 1.3; }
+  .user-chip .role-tag {
+    display: inline-block; margin-top: 2px; font-size: 10px; padding: 1px 8px; border-radius: 999px;
+    background: rgba(201,162,39,.22); color: var(--gold-light); font-weight: 700; letter-spacing: .3px; text-transform: uppercase;
+  }
+
+  nav { display: flex; gap: 6px; padding: 10px 26px; background: var(--card); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  nav button { background: transparent; color: var(--muted); font-weight: 600; padding: 8px 14px; border-radius: 8px; }
+  nav button:hover { background: #f1f4f8; color: var(--text); }
+  nav button.active { background: var(--navy); color: white; }
+
+  main { padding: 26px; max-width: 1150px; margin: 0 auto; }
   .view { display: none; }
-  .view.active { display: block; }
+  .view.active { display: block; animation: fadeIn .25s ease; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(4px);} to { opacity:1; transform: translateY(0);} }
 
-  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px,1fr)); gap: 14px; margin-bottom: 20px; }
-  .card { background: var(--card); border-radius: 10px; padding: 16px; box-shadow: 0 1px 4px rgba(0,0,0,.06); }
-  .card .value { font-size: 24px; font-weight: 700; }
+  .page-title { display:flex; align-items:center; gap:10px; margin: 0 0 18px; }
+  .page-title .bar { width: 4px; height: 22px; background: var(--gold); border-radius: 3px; }
+  .page-title h2 { font-size: 19px; margin: 0; color: var(--navy); }
+
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px,1fr)); gap: 14px; margin-bottom: 22px; }
+  .card {
+    background: var(--card); border-radius: 12px; padding: 18px; box-shadow: 0 1px 4px rgba(18,49,79,.08);
+    border-top: 3px solid var(--gold); position: relative; overflow: hidden;
+  }
+  .card::after {
+    content: ""; position: absolute; right: -10px; top: -10px; width: 60px; height: 60px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(201,162,39,.10), transparent 70%);
+  }
+  .card .value { font-size: 26px; font-weight: 800; color: var(--navy); }
   .card .label { font-size: 12px; color: var(--muted); margin-top: 4px; }
 
-  .panel { background: var(--card); border-radius: 10px; padding: 18px; box-shadow: 0 1px 4px rgba(0,0,0,.06); margin-bottom: 18px; }
-  .panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  .panel { background: var(--card); border-radius: 12px; padding: 20px; box-shadow: 0 1px 4px rgba(18,49,79,.08); margin-bottom: 20px; }
+  .panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+  .panel-header strong { color: var(--navy); font-size: 14.5px; }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--border); }
-  th { color: var(--muted); font-weight: 600; }
-  .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
-  .badge.occupee, .badge.actif, .badge.paye, .badge.resolu { background: #dcfce7; color: var(--ok); }
-  .badge.libre, .badge.en_attente, .badge.ouvert { background: #fef3c7; color: var(--warn); }
+  th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: .3px; }
+  tr:hover td { background: #fafbfc; }
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+  .badge.occupee, .badge.actif, .badge.paye, .badge.resolu, .badge.gerant { background: #dcfce7; color: var(--ok); }
+  .badge.libre, .badge.en_attente, .badge.ouvert, .badge.proprietaire { background: #fef3c7; color: var(--warn); }
   .badge.travaux, .badge.resilie, .badge.en_retard { background: #fee2e2; color: var(--danger); }
   .badge.en_cours, .badge.partiel { background: #dbeafe; color: var(--primary); }
 
-  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  .form-grid label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 3px; }
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   .actions-row { display: flex; gap: 6px; }
-  .actions-row button { padding: 5px 10px; font-size: 12px; }
+  .actions-row button { padding: 6px 11px; font-size: 12px; }
   .hidden { display: none !important; }
+  .empty-note { color: var(--muted); font-size: 13px; padding: 10px 0; }
+
+  footer.app-footer {
+    text-align: center; padding: 22px; color: var(--muted); font-size: 11.5px;
+    border-top: 1px solid var(--border); margin-top: 10px;
+  }
+  footer.app-footer b { color: var(--navy); }
 </style>
 </head>
 <body>
 
 <!-- ================= LOGIN ================= -->
 <div id="login-screen">
-  <form class="login-box" id="login-form">
-    <h1>Gestion Locative — Connexion</h1>
-    <div class="error hidden" id="login-error"></div>
-    <label>Email</label>
-    <input type="email" id="login-email" required>
-    <label>Mot de passe</label>
-    <input type="password" id="login-password" required>
-    <button type="submit" style="width:100%">Se connecter</button>
-  </form>
+  <div class="login-wrap">
+    <div class="login-brand">
+      <div class="brand-badge">
+        <div class="icon-box">🏛️</div>
+        <div class="brand-text">
+          <div class="name">TOURÉ IMMOBILIER</div>
+          <div class="sub">Gestion locative</div>
+        </div>
+      </div>
+      <h2>La gestion de vos biens,<br>en toute confiance.</h2>
+      <p>Suivi des maisons, des locataires, des baux, des encaissements de loyers et de la maintenance — piloté par <b>M. TOURÉ</b>.</p>
+      <div class="login-stats">
+        <div><div class="n">🏠</div><div class="l">Maisons</div></div>
+        <div><div class="n">👥</div><div class="l">Locataires</div></div>
+        <div><div class="n">💰</div><div class="l">Loyers</div></div>
+        <div><div class="n">🔧</div><div class="l">Maintenance</div></div>
+      </div>
+    </div>
+    <form class="login-box" id="login-form">
+      <h1>Connexion</h1>
+      <div class="hint">Accédez à votre espace de gestion locative.</div>
+      <div class="error hidden" id="login-error"></div>
+      <label>Email</label>
+      <input type="email" id="login-email" required>
+      <label>Mot de passe</label>
+      <input type="password" id="login-password" required>
+      <button type="submit" class="gold" style="width:100%">Se connecter</button>
+    </form>
+  </div>
 </div>
 
 <!-- ================= APP ================= -->
 <div id="app">
   <header>
-    <h1>🏠 Gestion Locative</h1>
-    <button class="secondary" id="logout-btn">Déconnexion</button>
+    <div class="brand-badge">
+      <div class="icon-box">🏛️</div>
+      <div class="brand-text">
+        <div class="name">TOURÉ IMMOBILIER</div>
+        <div class="sub">Gestion locative</div>
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="user-chip">
+        <div id="user-nom">—</div>
+        <span class="role-tag" id="user-role">—</span>
+      </div>
+      <button class="secondary" id="logout-btn">Déconnexion</button>
+    </div>
   </header>
   <nav id="main-nav">
-    <button data-view="dashboard" class="active">Tableau de bord</button>
-    <button data-view="maisons">Maisons</button>
-    <button data-view="locataires">Locataires</button>
-    <button data-view="baux">Baux</button>
-    <button data-view="paiements">Paiements</button>
-    <button data-view="tickets">Maintenance</button>
+    <button data-view="dashboard" class="active">📊 Tableau de bord</button>
+    <button data-view="maisons">🏠 Maisons</button>
+    <button data-view="locataires">👥 Locataires</button>
+    <button data-view="baux">📃 Baux</button>
+    <button data-view="paiements">💰 Paiements</button>
+    <button data-view="tickets">🔧 Maintenance</button>
+    <button data-view="utilisateurs" id="nav-utilisateurs" class="hidden">🔑 Utilisateurs</button>
   </nav>
 
   <main>
     <!-- DASHBOARD -->
     <section class="view active" id="view-dashboard">
+      <div class="page-title"><div class="bar"></div><h2>Tableau de bord</h2></div>
       <div class="cards" id="dashboard-cards"></div>
       <div class="panel">
         <div class="panel-header"><strong>Baux impayés ce mois</strong></div>
@@ -106,11 +232,12 @@
 
     <!-- MAISONS -->
     <section class="view" id="view-maisons">
-      <div class="panel">
+      <div class="page-title"><div class="bar"></div><h2>Maisons</h2></div>
+      <div class="panel gerant-only">
         <div class="panel-header"><strong>Nouvelle maison</strong></div>
         <form id="form-maison" class="form-grid">
           <div><label>Adresse</label><input name="adresse" required></div>
-          <div><label>Propriétaire</label><input name="proprietaire"></div>
+          <div><label>Propriétaire</label><select name="proprietaire_id" id="maison-proprietaire-select"><option value="">— Aucun (libre) —</option></select></div>
           <div><label>Nb pièces</label><input name="nb_pieces" type="number" value="1"></div>
           <div><label>Loyer de référence</label><input name="loyer_reference" type="number" step="0.01" value="0"></div>
           <div><label>Statut</label>
@@ -120,7 +247,7 @@
         </form>
       </div>
       <div class="panel">
-        <div class="panel-header"><strong>Maisons</strong></div>
+        <div class="panel-header"><strong>Liste des maisons</strong></div>
         <table><thead><tr><th>Adresse</th><th>Propriétaire</th><th>Pièces</th><th>Loyer réf.</th><th>Statut</th><th></th></tr></thead>
           <tbody id="maisons-list"></tbody>
         </table>
@@ -129,7 +256,8 @@
 
     <!-- LOCATAIRES -->
     <section class="view" id="view-locataires">
-      <div class="panel">
+      <div class="page-title"><div class="bar"></div><h2>Locataires</h2></div>
+      <div class="panel gerant-only">
         <div class="panel-header"><strong>Nouveau locataire</strong></div>
         <form id="form-locataire" class="form-grid">
           <div><label>Nom</label><input name="nom" required></div>
@@ -140,16 +268,17 @@
         </form>
       </div>
       <div class="panel">
-        <div class="panel-header"><strong>Locataires</strong></div>
+        <div class="panel-header"><strong>Liste des locataires</strong></div>
         <table><thead><tr><th>Nom</th><th>Téléphone</th><th>Pièce ID</th><th>Contact urgence</th><th></th></tr></thead>
           <tbody id="locataires-list"></tbody>
         </table>
       </div>
     </section>
 
-<!-- BAUX -->
+    <!-- BAUX -->
     <section class="view" id="view-baux">
-      <div class="panel">
+      <div class="page-title"><div class="bar"></div><h2>Baux</h2></div>
+      <div class="panel gerant-only">
         <div class="panel-header"><strong>Nouveau bail</strong></div>
         <form id="form-bail" class="form-grid">
           <div><label>Maison</label><select name="maison_id" id="bail-maison-select" required></select></div>
@@ -162,7 +291,7 @@
         </form>
       </div>
       <div class="panel">
-        <div class="panel-header"><strong>Baux</strong></div>
+        <div class="panel-header"><strong>Liste des baux</strong></div>
         <table><thead><tr><th>Maison</th><th>Locataire</th><th>Début</th><th>Loyer</th><th>Statut</th><th></th></tr></thead>
           <tbody id="baux-list"></tbody>
         </table>
@@ -171,7 +300,8 @@
 
     <!-- PAIEMENTS -->
     <section class="view" id="view-paiements">
-      <div class="panel">
+      <div class="page-title"><div class="bar"></div><h2>Paiements</h2></div>
+      <div class="panel gerant-only">
         <div class="panel-header"><strong>Enregistrer un encaissement</strong></div>
         <form id="form-paiement" class="form-grid">
           <div><label>Bail</label><select name="bail_id" id="paiement-bail-select" required></select></div>
@@ -197,7 +327,8 @@
 
     <!-- TICKETS -->
     <section class="view" id="view-tickets">
-      <div class="panel">
+      <div class="page-title"><div class="bar"></div><h2>Maintenance</h2></div>
+      <div class="panel gerant-only">
         <div class="panel-header"><strong>Nouveau ticket de maintenance</strong></div>
         <form id="form-ticket" class="form-grid">
           <div><label>Maison</label><select name="maison_id" id="ticket-maison-select" required></select></div>
@@ -208,19 +339,47 @@
         </form>
       </div>
       <div class="panel">
-        <div class="panel-header"><strong>Tickets</strong></div>
+        <div class="panel-header"><strong>Liste des tickets</strong></div>
         <table><thead><tr><th>Maison</th><th>Description</th><th>Coût</th><th>Statut</th><th></th></tr></thead>
           <tbody id="tickets-list"></tbody>
         </table>
       </div>
     </section>
+
+    <!-- UTILISATEURS -->
+    <section class="view" id="view-utilisateurs">
+      <div class="page-title"><div class="bar"></div><h2>Utilisateurs</h2></div>
+      <div class="panel">
+        <div class="panel-header"><strong>Créer un compte propriétaire</strong></div>
+        <form id="form-user" class="form-grid">
+          <div><label>Nom</label><input name="nom" required></div>
+          <div><label>Email</label><input name="email" type="email" required></div>
+          <div><label>Mot de passe</label><input name="password" type="password" required></div>
+          <div><label>Rôle</label>
+            <select name="role"><option value="proprietaire">Propriétaire</option><option value="gerant">Gérant</option></select>
+          </div>
+          <div style="align-self:end"><button type="submit">Créer le compte</button></div>
+        </form>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><strong>Comptes existants</strong></div>
+        <table><thead><tr><th>Nom</th><th>Email</th><th>Rôle</th><th></th></tr></thead>
+          <tbody id="users-list"></tbody>
+        </table>
+      </div>
+    </section>
   </main>
+
+  <footer class="app-footer">
+    <b>TOURÉ IMMOBILIER</b> — Gestion locative professionnelle · Gérant : M. TOURÉ
+  </footer>
 </div>
 
 <script>
 const API = "/api";
 let TOKEN = localStorage.getItem("gl_token") || null;
-let CACHE = { maisons: [], locataires: [], baux: [], paiements: [], tickets: [] };
+let ME = null;
+let CACHE = { maisons: [], locataires: [], baux: [], paiements: [], tickets: [], users: [] };
 
 // ---------- Auth ----------
 function authHeaders(extra = {}) {
@@ -257,7 +416,7 @@ document.getElementById("login-form").addEventListener("submit", async (e) => {
     const data = await res.json();
     TOKEN = data.access_token;
     localStorage.setItem("gl_token", TOKEN);
-    showApp();
+    await showApp();
   } catch (err) {
     errBox.textContent = err.message;
     errBox.classList.remove("hidden");
@@ -267,14 +426,26 @@ document.getElementById("login-form").addEventListener("submit", async (e) => {
 document.getElementById("logout-btn").addEventListener("click", logout);
 function logout() {
   TOKEN = null;
+  ME = null;
   localStorage.removeItem("gl_token");
   document.getElementById("app").style.display = "none";
   document.getElementById("login-screen").style.display = "flex";
 }
 
 async function showApp() {
+  ME = await apiFetch("/auth/me");
   document.getElementById("login-screen").style.display = "none";
   document.getElementById("app").style.display = "block";
+
+  document.getElementById("user-nom").textContent = ME.nom;
+  const roleTag = document.getElementById("user-role");
+  roleTag.textContent = ME.role === "gerant" ? "Gérant" : "Propriétaire";
+  roleTag.className = "role-tag badge " + ME.role;
+
+  const isGerant = ME.role === "gerant";
+  document.querySelectorAll(".gerant-only").forEach(el => el.classList.toggle("hidden", !isGerant));
+  document.getElementById("nav-utilisateurs").classList.toggle("hidden", !isGerant);
+
   await refreshAll();
   showView("dashboard");
 }
@@ -282,7 +453,7 @@ async function showApp() {
 // ---------- Navigation ----------
 document.getElementById("main-nav").addEventListener("click", (e) => {
   const btn = e.target.closest("button[data-view]");
-  if (!btn) return;
+  if (!btn || btn.classList.contains("hidden")) return;
   showView(btn.dataset.view);
 });
 
@@ -293,45 +464,50 @@ function showView(name) {
 
 // ---------- Data loading ----------
 async function refreshAll() {
-  const [maisons, locataires, baux, paiements, tickets] = await Promise.all([
+  const calls = [
     apiFetch("/maisons"), apiFetch("/locataires"), apiFetch("/baux"), apiFetch("/paiements"), apiFetch("/tickets"),
-  ]);
-  CACHE = { maisons, locataires, baux, paiements, tickets };
+  ];
+  if (ME && ME.role === "gerant") calls.push(apiFetch("/users"));
+  const [maisons, locataires, baux, paiements, tickets, users] = await Promise.all(calls);
+  CACHE = { maisons, locataires, baux, paiements, tickets, users: users || [] };
   renderDashboard();
   renderMaisons();
   renderLocataires();
   renderBaux();
   renderPaiements();
   renderTickets();
+  renderUsers();
   fillSelectors();
 }
 
 function badge(text) { return `<span class="badge ${text}">${text.replace("_", " ")}</span>`; }
 function maisonAdresse(id) { return CACHE.maisons.find(m => m.id === id)?.adresse || "—"; }
 function locataireNom(id) { return CACHE.locataires.find(l => l.id === id)?.nom || "—"; }
+function proprietaireNom(id) { return CACHE.users.find(u => u.id === id)?.nom || ""; }
 
 // ---------- Dashboard ----------
 async function renderDashboard() {
   const d = await apiFetch("/dashboard");
   document.getElementById("dashboard-cards").innerHTML = `
-    <div class="card"><div class="value">${d.total_maisons}</div><div class="label">Maisons</div></div>
+    <div class="card"><div class="value">${d.total_maisons}</div><div class="label">🏠 Maisons</div></div>
     <div class="card"><div class="value">${d.taux_occupation}%</div><div class="label">Taux d'occupation</div></div>
     <div class="card"><div class="value">${d.total_attendu}</div><div class="label">Loyers attendus (${d.mois})</div></div>
-    <div class="card"><div class="value">${d.total_encaisse}</div><div class="label">Loyers encaissés</div></div>
-    <div class="card"><div class="value">${d.nombre_impayes}</div><div class="label">Impayés</div></div>
-    <div class="card"><div class="value">${d.tickets_ouverts}</div><div class="label">Tickets ouverts</div></div>
+    <div class="card"><div class="value">${d.total_encaisse}</div><div class="label">💰 Loyers encaissés</div></div>
+    <div class="card"><div class="value">${d.nombre_impayes}</div><div class="label">⚠️ Impayés</div></div>
+    <div class="card"><div class="value">${d.tickets_ouverts}</div><div class="label">🔧 Tickets ouverts</div></div>
   `;
   document.getElementById("dashboard-impayes").innerHTML = d.impayes.map(i => `
     <tr><td>#${i.bail_id}</td><td>${maisonAdresse(i.maison_id)}</td><td>${i.loyer_mensuel}</td></tr>
-  `).join("") || `<tr><td colspan="3">Aucun impayé 🎉</td></tr>`;
+  `).join("") || `<tr><td colspan="3" class="empty-note">Aucun impayé 🎉</td></tr>`;
 }
 
 // ---------- Maisons ----------
 document.getElementById("form-maison").addEventListener("submit", async (e) => {
   e.preventDefault();
   const f = new FormData(e.target);
+  const propId = f.get("proprietaire_id");
   await apiFetch("/maisons", { method: "POST", body: JSON.stringify({
-    adresse: f.get("adresse"), proprietaire: f.get("proprietaire") || null,
+    adresse: f.get("adresse"), proprietaire_id: propId ? Number(propId) : null,
     nb_pieces: Number(f.get("nb_pieces")), loyer_reference: Number(f.get("loyer_reference")),
     statut: f.get("statut"),
   })});
@@ -342,10 +518,10 @@ document.getElementById("form-maison").addEventListener("submit", async (e) => {
 function renderMaisons() {
   document.getElementById("maisons-list").innerHTML = CACHE.maisons.map(m => `
     <tr>
-      <td>${m.adresse}</td><td>${m.proprietaire || "—"}</td><td>${m.nb_pieces}</td>
+      <td>${m.adresse}</td><td>${m.proprietaire || proprietaireNom(m.proprietaire_id) || "—"}</td><td>${m.nb_pieces}</td>
       <td>${m.loyer_reference}</td><td>${badge(m.statut)}</td>
-      <td class="actions-row"><button class="danger" onclick="deleteItem('maisons', ${m.id})">Suppr.</button></td>
-    </tr>`).join("") || `<tr><td colspan="6">Aucune maison</td></tr>`;
+      <td class="actions-row gerant-only ${ME && ME.role !== 'gerant' ? 'hidden' : ''}"><button class="danger" onclick="deleteItem('maisons', ${m.id})">Suppr.</button></td>
+    </tr>`).join("") || `<tr><td colspan="6" class="empty-note">Aucune maison</td></tr>`;
 }
 
 // ---------- Locataires ----------
@@ -364,8 +540,8 @@ function renderLocataires() {
   document.getElementById("locataires-list").innerHTML = CACHE.locataires.map(l => `
     <tr>
       <td>${l.nom}</td><td>${l.telephone || "—"}</td><td>${l.piece_identite || "—"}</td><td>${l.contact_urgence || "—"}</td>
-      <td class="actions-row"><button class="danger" onclick="deleteItem('locataires', ${l.id})">Suppr.</button></td>
-    </tr>`).join("") || `<tr><td colspan="5">Aucun locataire</td></tr>`;
+      <td class="actions-row gerant-only ${ME && ME.role !== 'gerant' ? 'hidden' : ''}"><button class="danger" onclick="deleteItem('locataires', ${l.id})">Suppr.</button></td>
+    </tr>`).join("") || `<tr><td colspan="5" class="empty-note">Aucun locataire</td></tr>`;
 }
 
 // ---------- Baux ----------
@@ -382,15 +558,16 @@ document.getElementById("form-bail").addEventListener("submit", async (e) => {
 });
 
 function renderBaux() {
+  const isGerant = ME && ME.role === "gerant";
   document.getElementById("baux-list").innerHTML = CACHE.baux.map(b => `
     <tr>
       <td>${maisonAdresse(b.maison_id)}</td><td>${locataireNom(b.locataire_id)}</td>
       <td>${b.date_debut}</td><td>${b.loyer_mensuel}</td><td>${badge(b.statut)}</td>
       <td class="actions-row">
-        ${b.statut === "actif" ? `<button class="secondary" onclick="resilierBail(${b.id})">Résilier</button>` : ""}
-        <button class="danger" onclick="deleteItem('baux', ${b.id})">Suppr.</button>
+        ${isGerant && b.statut === "actif" ? `<button class="secondary" onclick="resilierBail(${b.id})">Résilier</button>` : ""}
+        ${isGerant ? `<button class="danger" onclick="deleteItem('baux', ${b.id})">Suppr.</button>` : ""}
       </td>
-    </tr>`).join("") || `<tr><td colspan="6">Aucun bail</td></tr>`;
+    </tr>`).join("") || `<tr><td colspan="6" class="empty-note">Aucun bail</td></tr>`;
 }
 
 async function resilierBail(id) {
@@ -418,8 +595,8 @@ function renderPaiements() {
     <tr>
       <td>#${p.bail_id} — ${maisonAdresse(CACHE.baux.find(b => b.id === p.bail_id)?.maison_id)}</td>
       <td>${p.mois_concerne}</td><td>${p.montant}</td><td>${p.mode.replace("_"," ")}</td><td>${badge(p.statut)}</td>
-      <td class="actions-row"><button class="secondary" onclick="telechargerQuittance(${p.id})">Quittance PDF</button></td>
-    </tr>`).join("") || `<tr><td colspan="6">Aucun paiement</td></tr>`;
+      <td class="actions-row"><button class="secondary" onclick="telechargerQuittance(${p.id})">📄 Quittance PDF</button></td>
+    </tr>`).join("") || `<tr><td colspan="6" class="empty-note">Aucun paiement</td></tr>`;
 }
 
 async function telechargerQuittance(paiementId) {
@@ -445,14 +622,15 @@ document.getElementById("form-ticket").addEventListener("submit", async (e) => {
 });
 
 function renderTickets() {
+  const isGerant = ME && ME.role === "gerant";
   document.getElementById("tickets-list").innerHTML = CACHE.tickets.map(t => `
     <tr>
       <td>${maisonAdresse(t.maison_id)}</td><td>${t.description}</td><td>${t.cout}</td><td>${badge(t.statut)}</td>
       <td class="actions-row">
-        ${t.statut !== "resolu" ? `<button onclick="avancerTicket(${t.id}, '${t.statut === 'ouvert' ? 'en_cours' : 'resolu'}')">${t.statut === "ouvert" ? "Prendre en charge" : "Marquer résolu"}</button>` : ""}
-        <button class="danger" onclick="deleteItem('tickets', ${t.id})">Suppr.</button>
+        ${isGerant && t.statut !== "resolu" ? `<button onclick="avancerTicket(${t.id}, '${t.statut === 'ouvert' ? 'en_cours' : 'resolu'}')">${t.statut === "ouvert" ? "Prendre en charge" : "Marquer résolu"}</button>` : ""}
+        ${isGerant ? `<button class="danger" onclick="deleteItem('tickets', ${t.id})">Suppr.</button>` : ""}
       </td>
-    </tr>`).join("") || `<tr><td colspan="5">Aucun ticket</td></tr>`;
+    </tr>`).join("") || `<tr><td colspan="5" class="empty-note">Aucun ticket</td></tr>`;
 }
 
 async function avancerTicket(id, nouveauStatut) {
@@ -462,17 +640,54 @@ async function avancerTicket(id, nouveauStatut) {
   await refreshAll();
 }
 
+// ---------- Utilisateurs ----------
+const userForm = document.getElementById("form-user");
+if (userForm) {
+  userForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    try {
+      await apiFetch("/users", { method: "POST", body: JSON.stringify({
+        nom: f.get("nom"), email: f.get("email"), password: f.get("password"), role: f.get("role"),
+      })});
+      e.target.reset();
+      await refreshAll();
+    } catch (err) {
+      alert(err.message);
+    }
+  });
+}
+
+function renderUsers() {
+  const tbody = document.getElementById("users-list");
+  if (!tbody) return;
+  tbody.innerHTML = CACHE.users.map(u => `
+    <tr>
+      <td>${u.nom}</td><td>${u.email}</td><td>${badge(u.role)}</td>
+      <td class="actions-row">${u.id !== ME.id ? `<button class="danger" onclick="deleteItem('users', ${u.id})">Suppr.</button>` : ""}</td>
+    </tr>`).join("") || `<tr><td colspan="4" class="empty-note">Aucun utilisateur</td></tr>`;
+}
+
 // ---------- Selecteurs ----------
 function fillSelectors() {
   const maisonOptions = CACHE.maisons.map(m => `<option value="${m.id}">${m.adresse}</option>`).join("");
   const locataireOptions = CACHE.locataires.map(l => `<option value="${l.id}">${l.nom}</option>`).join("");
   const bailOptions = CACHE.baux.filter(b => b.statut === "actif").map(b => `<option value="${b.id}">#${b.id} — ${maisonAdresse(b.maison_id)} / ${locataireNom(b.locataire_id)}</option>`).join("");
+  const proprietaireOptions = CACHE.users.filter(u => u.role === "proprietaire").map(u => `<option value="${u.id}">${u.nom}</option>`).join("");
 
-  document.getElementById("bail-maison-select").innerHTML = maisonOptions;
-  document.getElementById("bail-locataire-select").innerHTML = locataireOptions;
-  document.getElementById("ticket-maison-select").innerHTML = maisonOptions;
-  document.getElementById("ticket-locataire-select").innerHTML = `<option value="">—</option>` + locataireOptions;
-  document.getElementById("paiement-bail-select").innerHTML = bailOptions;
+  const bailMaison = document.getElementById("bail-maison-select");
+  const bailLocataire = document.getElementById("bail-locataire-select");
+  const ticketMaison = document.getElementById("ticket-maison-select");
+  const ticketLocataire = document.getElementById("ticket-locataire-select");
+  const paiementBail = document.getElementById("paiement-bail-select");
+  const maisonProprietaire = document.getElementById("maison-proprietaire-select");
+
+  if (bailMaison) bailMaison.innerHTML = maisonOptions;
+  if (bailLocataire) bailLocataire.innerHTML = locataireOptions;
+  if (ticketMaison) ticketMaison.innerHTML = maisonOptions;
+  if (ticketLocataire) ticketLocataire.innerHTML = `<option value="">—</option>` + locataireOptions;
+  if (paiementBail) paiementBail.innerHTML = bailOptions;
+  if (maisonProprietaire) maisonProprietaire.innerHTML = `<option value="">— Aucun (libre) —</option>` + proprietaireOptions;
 }
 
 // ---------- Suppression générique ----------
