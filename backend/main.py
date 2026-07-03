@@ -76,6 +76,8 @@ class User(Base):
     email = Column(String, unique=True, nullable=False, index=True)
     mot_de_passe_hash = Column(String, nullable=False)
     role = Column(String, default="proprietaire")  # gerant / proprietaire
+    reset_token = Column(String, nullable=True)
+    reset_token_expiry = Column(DateTime, nullable=True)
 
     maisons = relationship("Maison", back_populates="proprietaire_user")
 
@@ -205,6 +207,8 @@ try:
     _add_column_if_missing("maisons", "proprietaire_id", "INTEGER")
     _add_column_if_missing("paiements", "verification_code", "VARCHAR")
     _add_column_if_missing("locataires", "archive", "BOOLEAN")
+    _add_column_if_missing("users", "reset_token", "VARCHAR")
+    _add_column_if_missing("users", "reset_token_expiry", "TIMESTAMP")
 except Exception:
     pass
 
@@ -230,6 +234,15 @@ class UserOut(BaseModel):
     nom: str
     email: str
     role: str
+
+
+class ForgotPasswordIn(BaseModel):
+    email: str
+
+
+class ResetPasswordIn(BaseModel):
+    token: str
+    new_password: str
 
 
 class MaisonIn(BaseModel):
@@ -442,6 +455,38 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
 @app.get("/api/auth/me")
 def me(current_user: User = Depends(get_current_user)):
     return {"id": current_user.id, "nom": current_user.nom, "email": current_user.email, "role": current_user.role}
+
+
+# ---------- Mot de passe oublié (auto-service) ----------
+@app.post("/api/auth/forgot-password")
+def forgot_password(data: ForgotPasswordIn, request: Request, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == data.email).first()
+    if not user:
+        raise HTTPException(404, "Aucun compte trouvé avec cet email.")
+    token = secrets.token_urlsafe(32)
+    user.reset_token = token
+    user.reset_token_expiry = datetime.utcnow() + timedelta(hours=1)
+    db.commit()
+    # Reconstruit l'URL publique en tenant compte du proxy Render (voir quittance_pdf pour le même souci https/http).
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+    host = request.headers.get("x-forwarded-host", request.headers.get("host", request.url.netloc))
+    base_url = f"{proto}://{host}"
+    reset_url = f"{base_url}/reset-password.html?token={token}"
+    return {"reset_url": reset_url, "expire_dans_minutes": 60}
+
+
+@app.post("/api/auth/reset-password")
+def reset_password(data: ResetPasswordIn, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.reset_token == data.token).first()
+    if not user or not user.reset_token_expiry or user.reset_token_expiry < datetime.utcnow():
+        raise HTTPException(400, "Lien de réinitialisation invalide ou expiré. Refaites une demande.")
+    if len(data.new_password) < 4:
+        raise HTTPException(400, "Le mot de passe doit contenir au moins 4 caractères.")
+    user.mot_de_passe_hash = pwd_context.hash(data.new_password)
+    user.reset_token = None
+    user.reset_token_expiry = None
+    db.commit()
+    return {"ok": True}
 
 
 # ---------- Utilisateurs (gérant uniquement) ----------

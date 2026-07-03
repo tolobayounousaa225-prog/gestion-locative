@@ -228,7 +228,22 @@
       <label>Mot de passe</label>
       <input type="password" id="login-password" required>
       <button type="submit" class="gold" style="width:100%">Se connecter</button>
+      <div style="text-align:center; margin-top:14px;">
+        <a href="#" id="forgot-password-link" style="font-size:12.5px; color:var(--muted); text-decoration:underline;">Mot de passe oublié ?</a>
+      </div>
     </form>
+    <div class="login-box hidden" id="forgot-password-box">
+      <h1>Mot de passe oublié</h1>
+      <div class="hint">Entrez votre email : un lien de réinitialisation sera généré ci-dessous (aucun email n'est envoyé automatiquement, copiez le lien vous-même).</div>
+      <div class="error hidden" id="forgot-error"></div>
+      <div id="forgot-result"></div>
+      <label>Email</label>
+      <input type="email" id="forgot-email">
+      <button type="button" id="forgot-submit-btn" class="gold" style="width:100%">Générer le lien de réinitialisation</button>
+      <div style="text-align:center; margin-top:14px;">
+        <a href="#" id="back-to-login-link" style="font-size:12.5px; color:var(--muted); text-decoration:underline;">← Retour à la connexion</a>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -566,6 +581,53 @@ document.getElementById("login-form").addEventListener("submit", async (e) => {
     TOKEN = data.access_token;
     localStorage.setItem("gl_token", TOKEN);
     await showApp();
+  } catch (err) {
+    errBox.textContent = err.message;
+    errBox.classList.remove("hidden");
+  }
+});
+
+// ---------- Mot de passe oublié ----------
+document.getElementById("forgot-password-link").addEventListener("click", (e) => {
+  e.preventDefault();
+  document.getElementById("login-form").classList.add("hidden");
+  document.getElementById("forgot-password-box").classList.remove("hidden");
+});
+
+document.getElementById("back-to-login-link").addEventListener("click", (e) => {
+  e.preventDefault();
+  document.getElementById("forgot-password-box").classList.add("hidden");
+  document.getElementById("login-form").classList.remove("hidden");
+  document.getElementById("forgot-result").innerHTML = "";
+  document.getElementById("forgot-error").classList.add("hidden");
+});
+
+document.getElementById("forgot-submit-btn").addEventListener("click", async () => {
+  const email = document.getElementById("forgot-email").value.trim();
+  const errBox = document.getElementById("forgot-error");
+  const resultBox = document.getElementById("forgot-result");
+  errBox.classList.add("hidden");
+  resultBox.innerHTML = "";
+  if (!email) {
+    errBox.textContent = "Veuillez entrer un email.";
+    errBox.classList.remove("hidden");
+    return;
+  }
+  try {
+    const res = await fetch(API + "/auth/forgot-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || "Erreur lors de la génération du lien.");
+    resultBox.innerHTML = `
+      <div style="background:#dcfce7; color:var(--ok); padding:10px 12px; border-radius:8px; font-size:13px; margin-bottom:10px;">
+        Lien généré (valable 1 heure). Copiez-le et ouvrez-le pour définir un nouveau mot de passe :
+      </div>
+      <div style="word-break:break-all; background:#fbfcfd; border:1.5px solid var(--border); border-radius:8px; padding:10px 12px; font-size:12.5px; margin-bottom:10px;">
+        <a href="${data.reset_url}" target="_blank">${data.reset_url}</a>
+      </div>`;
   } catch (err) {
     errBox.textContent = err.message;
     errBox.classList.remove("hidden");
