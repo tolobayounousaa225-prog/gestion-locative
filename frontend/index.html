@@ -152,6 +152,49 @@
     border-top: 1px solid var(--border); margin-top: 10px;
   }
   footer.app-footer b { color: var(--navy); }
+
+  /* ---------- Nav badge (messages non lus) ---------- */
+  .nav-badge {
+    display: inline-block; min-width: 16px; padding: 0 5px; margin-left: 4px; border-radius: 999px;
+    background: var(--danger); color: #fff; font-size: 10px; font-weight: 800; line-height: 16px; text-align: center;
+  }
+
+  /* ---------- Évolution (graphique en barres) ---------- */
+  .evolution-chart { display: flex; align-items: flex-end; gap: 14px; height: 160px; padding: 10px 4px 0; }
+  .evolution-bar-wrap { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; }
+  .evolution-bar { width: 60%; max-width: 42px; background: linear-gradient(180deg, var(--gold), #a8811c); border-radius: 6px 6px 0 0; transition: height .3s ease; position: relative; }
+  .evolution-bar.low { background: linear-gradient(180deg, #f2b6b6, var(--danger)); }
+  .evolution-bar-pct { font-size: 11px; font-weight: 700; color: var(--navy); margin-bottom: 4px; }
+  .evolution-bar-label { font-size: 10.5px; color: var(--muted); margin-top: 6px; }
+
+  /* ---------- Observations / messages ---------- */
+  .obs-item { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; }
+  .obs-item.unread { border-left: 4px solid var(--gold); background: #fffdf6; }
+  .obs-meta { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+  .obs-message { font-size: 13.5px; margin-bottom: 8px; }
+  .obs-reponse { background: var(--light, #f4f6f8); border-radius: 8px; padding: 8px 10px; font-size: 13px; margin-top: 6px; }
+  .obs-reponse b { color: var(--navy); }
+  .obs-reply-form { display: flex; gap: 6px; margin-top: 8px; }
+  .obs-reply-form textarea { flex: 1; margin-bottom: 0; min-height: 38px; }
+
+  /* ---------- Bilan ---------- */
+  .bilan-toolbar { display: flex; gap: 10px; align-items: end; margin-bottom: 18px; }
+  .bilan-toolbar > div { flex: 0 0 auto; }
+  .bilan-report { display: none; }
+  .bilan-report.visible { display: block; }
+  .bilan-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid var(--gold); padding-bottom: 12px; margin-bottom: 18px; }
+  .bilan-header h3 { margin: 0; color: var(--navy); font-size: 18px; }
+  .bilan-header .muted { color: var(--muted); font-size: 12px; }
+  .bilan-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px,1fr)); gap: 12px; margin-bottom: 18px; }
+  .bilan-analyse { background: #fffdf6; border: 1px solid var(--gold-light); border-radius: 10px; padding: 16px; line-height: 1.65; font-size: 13.5px; }
+  .bilan-analyse .tag { display:inline-block; font-size: 10px; text-transform: uppercase; letter-spacing:.4px; color: var(--gold); font-weight: 800; margin-bottom: 8px; }
+
+  @media print {
+    body * { visibility: hidden; }
+    #view-bilan, #view-bilan * { visibility: visible; }
+    #view-bilan { position: absolute; left: 0; top: 0; width: 100%; padding: 10px; }
+    .no-print { display: none !important; }
+  }
 </style>
 </head>
 <body>
@@ -214,6 +257,9 @@
     <button data-view="baux">📃 Baux</button>
     <button data-view="paiements">💰 Paiements</button>
     <button data-view="tickets">🔧 Maintenance</button>
+    <button data-view="depenses" id="nav-depenses" class="hidden">💸 Dépenses</button>
+    <button data-view="observations">✉️ Observations<span id="obs-badge" class="nav-badge hidden">0</span></button>
+    <button data-view="bilan" id="nav-bilan" class="hidden">📈 Bilan</button>
     <button data-view="utilisateurs" id="nav-utilisateurs" class="hidden">🔑 Utilisateurs</button>
   </nav>
 
@@ -222,6 +268,10 @@
     <section class="view active" id="view-dashboard">
       <div class="page-title"><div class="bar"></div><h2>Tableau de bord</h2></div>
       <div class="cards" id="dashboard-cards"></div>
+      <div class="panel">
+        <div class="panel-header"><strong>Évolution de l'encaissement (6 derniers mois)</strong></div>
+        <div id="evolution-chart" class="evolution-chart"></div>
+      </div>
       <div class="panel">
         <div class="panel-header"><strong>Baux impayés ce mois</strong></div>
         <table><thead><tr><th>Bail</th><th>Maison</th><th>Loyer</th></tr></thead>
@@ -258,13 +308,17 @@
     <section class="view" id="view-locataires">
       <div class="page-title"><div class="bar"></div><h2>Locataires</h2></div>
       <div class="panel gerant-only">
-        <div class="panel-header"><strong>Nouveau locataire</strong></div>
+        <div class="panel-header"><strong id="locataire-form-title">Nouveau locataire</strong></div>
         <form id="form-locataire" class="form-grid">
+          <input type="hidden" name="edit_id" id="locataire-edit-id">
           <div><label>Nom</label><input name="nom" required></div>
           <div><label>Téléphone</label><input name="telephone"></div>
           <div><label>Pièce d'identité</label><input name="piece_identite"></div>
           <div><label>Contact d'urgence</label><input name="contact_urgence"></div>
-          <div style="align-self:end"><button type="submit">Ajouter</button></div>
+          <div style="align-self:end; display:flex; gap:6px;">
+            <button type="submit" id="locataire-submit-btn">Ajouter</button>
+            <button type="button" class="secondary hidden" id="locataire-cancel-btn" onclick="annulerEditLocataire()">Annuler</button>
+          </div>
         </form>
       </div>
       <div class="panel">
@@ -346,6 +400,79 @@
       </div>
     </section>
 
+    <!-- DEPENSES -->
+    <section class="view" id="view-depenses">
+      <div class="page-title"><div class="bar"></div><h2>Dépenses</h2></div>
+      <div class="panel gerant-only">
+        <div class="panel-header"><strong>Nouvelle dépense</strong></div>
+        <form id="form-depense" class="form-grid">
+          <div>
+            <label>Catégorie</label>
+            <select name="categorie">
+              <option value="salaire_gerant">Salaire du gérant</option>
+              <option value="entretien">Entretien / réparations</option>
+              <option value="taxes">Taxes / impôts</option>
+              <option value="transport">Transport</option>
+              <option value="autre">Autre</option>
+            </select>
+          </div>
+          <div><label>Libellé</label><input name="libelle" required></div>
+          <div><label>Montant</label><input name="montant" type="number" step="0.01" required></div>
+          <div><label>Date</label><input name="date_depense" type="date" required></div>
+          <div style="align-self:end"><button type="submit">Ajouter</button></div>
+        </form>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><strong>Historique des dépenses</strong></div>
+        <table><thead><tr><th>Date</th><th>Catégorie</th><th>Libellé</th><th>Montant</th><th></th></tr></thead>
+          <tbody id="depenses-list"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- OBSERVATIONS -->
+    <section class="view" id="view-observations">
+      <div class="page-title"><div class="bar"></div><h2>Observations</h2></div>
+      <div class="panel proprietaire-only hidden">
+        <div class="panel-header"><strong>Signaler une observation au gérant</strong></div>
+        <form id="form-observation" class="form-grid">
+          <div><label>Maison concernée (optionnel)</label><select name="maison_id" id="observation-maison-select"><option value="">—</option></select></div>
+          <div style="grid-column:1/-1"><label>Message</label><textarea name="message" required placeholder="Décrivez ce que vous avez constaté..."></textarea></div>
+          <div style="align-self:end"><button type="submit">Envoyer</button></div>
+        </form>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><strong id="observations-title">Messages</strong></div>
+        <div id="observations-list"></div>
+      </div>
+    </section>
+
+    <!-- BILAN -->
+    <section class="view" id="view-bilan">
+      <div class="page-title no-print"><div class="bar"></div><h2>Bilan mensuel</h2></div>
+      <div class="panel no-print">
+        <div class="bilan-toolbar">
+          <div><label>Mois</label><input type="month" id="bilan-mois-input"></div>
+          <div><button type="button" onclick="genererBilan()">Générer le bilan</button></div>
+          <div><button type="button" class="secondary" id="bilan-print-btn" onclick="window.print()" disabled>🖨️ Imprimer</button></div>
+        </div>
+        <div class="empty-note" id="bilan-loading"></div>
+      </div>
+      <div class="panel bilan-report" id="bilan-report">
+        <div class="bilan-header">
+          <div>
+            <h3 id="bilan-titre">Bilan — TOURÉ IMMOBILIER</h3>
+            <div class="muted" id="bilan-souscritre"></div>
+          </div>
+        </div>
+        <div class="bilan-grid" id="bilan-cards"></div>
+        <div class="bilan-analyse">
+          <div class="tag" id="bilan-analyse-tag">Analyse</div>
+          <div id="bilan-analyse-texte"></div>
+        </div>
+      </div>
+    </section>
+
     <!-- UTILISATEURS -->
     <section class="view" id="view-utilisateurs">
       <div class="page-title"><div class="bar"></div><h2>Utilisateurs</h2></div>
@@ -379,7 +506,7 @@
 const API = "/api";
 let TOKEN = localStorage.getItem("gl_token") || null;
 let ME = null;
-let CACHE = { maisons: [], locataires: [], baux: [], paiements: [], tickets: [], users: [] };
+let CACHE = { maisons: [], locataires: [], baux: [], paiements: [], tickets: [], users: [], depenses: [], observations: [] };
 
 // ---------- Auth ----------
 function authHeaders(extra = {}) {
@@ -444,7 +571,17 @@ async function showApp() {
 
   const isGerant = ME.role === "gerant";
   document.querySelectorAll(".gerant-only").forEach(el => el.classList.toggle("hidden", !isGerant));
+  document.querySelectorAll(".proprietaire-only").forEach(el => el.classList.toggle("hidden", isGerant));
   document.getElementById("nav-utilisateurs").classList.toggle("hidden", !isGerant);
+  document.getElementById("nav-depenses").classList.toggle("hidden", !isGerant);
+  document.getElementById("nav-bilan").classList.toggle("hidden", !isGerant);
+  document.getElementById("observations-title").textContent = isGerant ? "Boîte à messages" : "Mes observations";
+
+  const bilanInput = document.getElementById("bilan-mois-input");
+  if (bilanInput && !bilanInput.value) {
+    const d = new Date();
+    bilanInput.value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  }
 
   await refreshAll();
   showView("dashboard");
@@ -464,12 +601,14 @@ function showView(name) {
 
 // ---------- Data loading ----------
 async function refreshAll() {
+  const isGerant = ME && ME.role === "gerant";
   const calls = [
     apiFetch("/maisons"), apiFetch("/locataires"), apiFetch("/baux"), apiFetch("/paiements"), apiFetch("/tickets"),
+    apiFetch("/observations"),
   ];
-  if (ME && ME.role === "gerant") calls.push(apiFetch("/users"));
-  const [maisons, locataires, baux, paiements, tickets, users] = await Promise.all(calls);
-  CACHE = { maisons, locataires, baux, paiements, tickets, users: users || [] };
+  if (isGerant) { calls.push(apiFetch("/users")); calls.push(apiFetch("/depenses")); }
+  const [maisons, locataires, baux, paiements, tickets, observations, users, depenses] = await Promise.all(calls);
+  CACHE = { maisons, locataires, baux, paiements, tickets, users: users || [], depenses: depenses || [], observations: observations || [] };
   renderDashboard();
   renderMaisons();
   renderLocataires();
@@ -477,6 +616,8 @@ async function refreshAll() {
   renderPaiements();
   renderTickets();
   renderUsers();
+  renderDepenses();
+  renderObservations();
   fillSelectors();
 }
 
@@ -499,6 +640,31 @@ async function renderDashboard() {
   document.getElementById("dashboard-impayes").innerHTML = d.impayes.map(i => `
     <tr><td>#${i.bail_id}</td><td>${maisonAdresse(i.maison_id)}</td><td>${i.loyer_mensuel}</td></tr>
   `).join("") || `<tr><td colspan="3" class="empty-note">Aucun impayé 🎉</td></tr>`;
+
+  renderEvolution();
+}
+
+async function renderEvolution() {
+  const el = document.getElementById("evolution-chart");
+  if (!el) return;
+  try {
+    const data = await apiFetch("/dashboard/evolution?mois=6");
+    const moisLabels = { "01":"Jan","02":"Fév","03":"Mar","04":"Avr","05":"Mai","06":"Juin","07":"Juil","08":"Août","09":"Sep","10":"Oct","11":"Nov","12":"Déc" };
+    el.innerHTML = data.map(m => {
+      const [annee, mm] = m.mois.split("-");
+      const pct = Math.max(0, Math.min(100, m.taux_encaissement));
+      const hauteur = Math.max(6, pct);
+      const low = pct < 60 ? "low" : "";
+      return `
+        <div class="evolution-bar-wrap">
+          <div class="evolution-bar-pct">${m.taux_encaissement}%</div>
+          <div class="evolution-bar ${low}" style="height:${hauteur}%"></div>
+          <div class="evolution-bar-label">${moisLabels[mm] || mm} ${annee.slice(2)}</div>
+        </div>`;
+    }).join("");
+  } catch (err) {
+    el.innerHTML = `<div class="empty-note">Évolution indisponible</div>`;
+  }
 }
 
 // ---------- Maisons ----------
@@ -528,19 +694,50 @@ function renderMaisons() {
 document.getElementById("form-locataire").addEventListener("submit", async (e) => {
   e.preventDefault();
   const f = new FormData(e.target);
-  await apiFetch("/locataires", { method: "POST", body: JSON.stringify({
+  const editId = f.get("edit_id");
+  const payload = {
     nom: f.get("nom"), telephone: f.get("telephone") || null,
     piece_identite: f.get("piece_identite") || null, contact_urgence: f.get("contact_urgence") || null,
-  })});
-  e.target.reset();
+  };
+  if (editId) {
+    await apiFetch(`/locataires/${editId}`, { method: "PUT", body: JSON.stringify(payload) });
+  } else {
+    await apiFetch("/locataires", { method: "POST", body: JSON.stringify(payload) });
+  }
+  annulerEditLocataire();
   await refreshAll();
 });
+
+function editLocataire(l) {
+  const form = document.getElementById("form-locataire");
+  form.nom.value = l.nom || "";
+  form.telephone.value = l.telephone || "";
+  form.piece_identite.value = l.piece_identite || "";
+  form.contact_urgence.value = l.contact_urgence || "";
+  document.getElementById("locataire-edit-id").value = l.id;
+  document.getElementById("locataire-form-title").textContent = `Modifier — ${l.nom}`;
+  document.getElementById("locataire-submit-btn").textContent = "Enregistrer les modifications";
+  document.getElementById("locataire-cancel-btn").classList.remove("hidden");
+  document.getElementById("view-locataires").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function annulerEditLocataire() {
+  const form = document.getElementById("form-locataire");
+  form.reset();
+  document.getElementById("locataire-edit-id").value = "";
+  document.getElementById("locataire-form-title").textContent = "Nouveau locataire";
+  document.getElementById("locataire-submit-btn").textContent = "Ajouter";
+  document.getElementById("locataire-cancel-btn").classList.add("hidden");
+}
 
 function renderLocataires() {
   document.getElementById("locataires-list").innerHTML = CACHE.locataires.map(l => `
     <tr>
       <td>${l.nom}</td><td>${l.telephone || "—"}</td><td>${l.piece_identite || "—"}</td><td>${l.contact_urgence || "—"}</td>
-      <td class="actions-row gerant-only ${ME && ME.role !== 'gerant' ? 'hidden' : ''}"><button class="danger" onclick="deleteItem('locataires', ${l.id})">Suppr.</button></td>
+      <td class="actions-row gerant-only ${ME && ME.role !== 'gerant' ? 'hidden' : ''}">
+        <button class="secondary" onclick='editLocataire(${JSON.stringify(l).replace(/'/g, "&apos;")})'>Modifier</button>
+        <button class="danger" onclick="deleteItem('locataires', ${l.id})">Suppr.</button>
+      </td>
     </tr>`).join("") || `<tr><td colspan="5" class="empty-note">Aucun locataire</td></tr>`;
 }
 
@@ -668,6 +865,135 @@ function renderUsers() {
     </tr>`).join("") || `<tr><td colspan="4" class="empty-note">Aucun utilisateur</td></tr>`;
 }
 
+// ---------- Dépenses ----------
+const depenseForm = document.getElementById("form-depense");
+if (depenseForm) {
+  depenseForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    await apiFetch("/depenses", { method: "POST", body: JSON.stringify({
+      categorie: f.get("categorie"), libelle: f.get("libelle"),
+      montant: Number(f.get("montant")), date_depense: f.get("date_depense"),
+    })});
+    e.target.reset();
+    await refreshAll();
+  });
+}
+
+const CATEGORIE_LABELS = {
+  salaire_gerant: "Salaire du gérant", entretien: "Entretien / réparations",
+  taxes: "Taxes / impôts", transport: "Transport", autre: "Autre",
+};
+
+function renderDepenses() {
+  const tbody = document.getElementById("depenses-list");
+  if (!tbody) return;
+  tbody.innerHTML = CACHE.depenses.map(d => `
+    <tr>
+      <td>${d.date_depense}</td><td>${CATEGORIE_LABELS[d.categorie] || d.categorie}</td>
+      <td>${d.libelle}</td><td>${d.montant}</td>
+      <td class="actions-row"><button class="danger" onclick="deleteItem('depenses', ${d.id})">Suppr.</button></td>
+    </tr>`).join("") || `<tr><td colspan="5" class="empty-note">Aucune dépense enregistrée</td></tr>`;
+}
+
+// ---------- Observations ----------
+const observationForm = document.getElementById("form-observation");
+if (observationForm) {
+  observationForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    const maisonId = f.get("maison_id");
+    await apiFetch("/observations", { method: "POST", body: JSON.stringify({
+      maison_id: maisonId ? Number(maisonId) : null, message: f.get("message"),
+    })});
+    e.target.reset();
+    await refreshAll();
+  });
+}
+
+function renderObservations() {
+  const container = document.getElementById("observations-list");
+  if (!container) return;
+  const isGerant = ME && ME.role === "gerant";
+  const badge = document.getElementById("obs-badge");
+  const nonLues = CACHE.observations.filter(o => !o.lu).length;
+  if (isGerant && nonLues > 0) {
+    badge.textContent = nonLues;
+    badge.classList.remove("hidden");
+  } else if (badge) {
+    badge.classList.add("hidden");
+  }
+
+  if (!CACHE.observations.length) {
+    container.innerHTML = `<div class="empty-note">Aucune observation pour le moment.</div>`;
+    return;
+  }
+
+  container.innerHTML = CACHE.observations.map(o => {
+    const date = new Date(o.date_creation).toLocaleString("fr-FR");
+    const maison = o.maison_id ? maisonAdresse(o.maison_id) : "—";
+    const auteur = isGerant ? (proprietaireNom(o.proprietaire_id) || "Propriétaire") : "Vous";
+    let html = `
+      <div class="obs-item ${!o.lu ? 'unread' : ''}">
+        <div class="obs-meta">${auteur} · ${maison} · ${date}${!o.lu ? " · <b style='color:var(--gold)'>non lu</b>" : ""}</div>
+        <div class="obs-message">${o.message}</div>`;
+    if (o.reponse) {
+      html += `<div class="obs-reponse"><b>Réponse du gérant :</b> ${o.reponse}</div>`;
+    } else if (isGerant) {
+      html += `
+        <div class="obs-reply-form">
+          <textarea id="obs-reply-${o.id}" placeholder="Répondre..."></textarea>
+          <button onclick="repondreObservation(${o.id})">Répondre</button>
+        </div>`;
+    }
+    html += `</div>`;
+    return html;
+  }).join("");
+}
+
+async function repondreObservation(id) {
+  const textarea = document.getElementById(`obs-reply-${id}`);
+  const reponse = textarea ? textarea.value.trim() : "";
+  if (!reponse) return;
+  await apiFetch(`/observations/${id}/repondre`, { method: "PUT", body: JSON.stringify({ reponse }) });
+  await refreshAll();
+}
+
+// ---------- Bilan mensuel ----------
+async function genererBilan() {
+  const mois = document.getElementById("bilan-mois-input").value;
+  if (!mois) return;
+  const loading = document.getElementById("bilan-loading");
+  loading.textContent = "Génération du bilan en cours...";
+  try {
+    const b = await apiFetch(`/bilan/${mois}`);
+    loading.textContent = "";
+    document.getElementById("bilan-print-btn").disabled = false;
+
+    document.getElementById("bilan-titre").textContent = `Bilan mensuel — ${b.societe}`;
+    document.getElementById("bilan-souscritre").textContent = `Période : ${b.mois} · Généré le ${new Date(b.genere_le).toLocaleString("fr-FR")}`;
+
+    document.getElementById("bilan-cards").innerHTML = `
+      <div class="card"><div class="value">${b.total_attendu}</div><div class="label">Loyers attendus</div></div>
+      <div class="card"><div class="value">${b.total_encaisse}</div><div class="label">Loyers encaissés</div></div>
+      <div class="card"><div class="value">${b.taux_encaissement}%</div><div class="label">Taux d'encaissement</div></div>
+      <div class="card"><div class="value">${b.nombre_impayes}</div><div class="label">Impayés</div></div>
+      <div class="card"><div class="value">${b.total_depenses}</div><div class="label">Dépenses du mois</div></div>
+      <div class="card"><div class="value">${b.resultat_net}</div><div class="label">Résultat net</div></div>
+      <div class="card"><div class="value">${b.taux_occupation}%</div><div class="label">Taux d'occupation actuel</div></div>
+      <div class="card"><div class="value">${b.tickets_ouverts_periode}</div><div class="label">Tickets ce mois</div></div>
+    `;
+
+    const tagEl = document.getElementById("bilan-analyse-tag");
+    tagEl.textContent = b.analyse_source === "ia" ? "Analyse générée par IA" : "Analyse automatique";
+    document.getElementById("bilan-analyse-texte").textContent = b.analyse;
+
+    document.getElementById("bilan-report").classList.add("visible");
+  } catch (err) {
+    loading.textContent = "Erreur : " + err.message;
+  }
+}
+
 // ---------- Selecteurs ----------
 function fillSelectors() {
   const maisonOptions = CACHE.maisons.map(m => `<option value="${m.id}">${m.adresse}</option>`).join("");
@@ -681,6 +1007,7 @@ function fillSelectors() {
   const ticketLocataire = document.getElementById("ticket-locataire-select");
   const paiementBail = document.getElementById("paiement-bail-select");
   const maisonProprietaire = document.getElementById("maison-proprietaire-select");
+  const observationMaison = document.getElementById("observation-maison-select");
 
   if (bailMaison) bailMaison.innerHTML = maisonOptions;
   if (bailLocataire) bailLocataire.innerHTML = locataireOptions;
@@ -688,6 +1015,7 @@ function fillSelectors() {
   if (ticketLocataire) ticketLocataire.innerHTML = `<option value="">—</option>` + locataireOptions;
   if (paiementBail) paiementBail.innerHTML = bailOptions;
   if (maisonProprietaire) maisonProprietaire.innerHTML = `<option value="">— Aucun (libre) —</option>` + proprietaireOptions;
+  if (observationMaison) observationMaison.innerHTML = `<option value="">—</option>` + maisonOptions;
 }
 
 // ---------- Suppression générique ----------

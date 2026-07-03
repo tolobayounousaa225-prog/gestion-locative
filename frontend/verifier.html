@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vérification de quittance — TOURÉ IMMOBILIER</title>
+<style>
+  :root {
+    --navy: #12314F; --navy-dark: #0B1F35; --gold: #C9A227; --gold-light: #E8CE7A;
+    --text: #1F2937; --muted: #6B7280; --border: #E2E6EB; --ok: #16a34a; --danger: #dc2626;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; font-family: 'Segoe UI', -apple-system, Roboto, Arial, sans-serif;
+    background: linear-gradient(160deg, var(--navy-dark), var(--navy) 70%);
+    display: flex; align-items: center; justify-content: center; padding: 24px;
+  }
+  .card { background: #fff; border-radius: 16px; padding: 32px; max-width: 440px; width: 100%; box-shadow: 0 25px 60px rgba(0,0,0,.35); }
+  .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
+  .brand .icon { width: 40px; height: 40px; border-radius: 10px; background: linear-gradient(135deg, var(--gold), #a8811c); display:flex; align-items:center; justify-content:center; font-size: 20px; }
+  .brand .name { font-weight: 800; font-size: 16px; color: var(--navy); }
+  .brand .sub { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
+  .status { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-radius: 10px; margin-bottom: 20px; font-weight: 700; }
+  .status.valide { background: #dcfce7; color: var(--ok); }
+  .status.invalide { background: #fee2e2; color: var(--danger); }
+  .status .icon { font-size: 22px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  td { padding: 8px 0; border-bottom: 1px solid var(--border); }
+  td:first-child { color: var(--muted); width: 45%; }
+  td:last-child { font-weight: 600; text-align: right; }
+  .loading, .error-msg { text-align: center; color: var(--muted); padding: 20px 0; }
+  .footer-note { text-align: center; font-size: 11px; color: var(--muted); margin-top: 18px; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="brand">
+      <div class="icon">🏛️</div>
+      <div>
+        <div class="name">TOURÉ IMMOBILIER</div>
+        <div class="sub">Vérification d'authenticité</div>
+      </div>
+    </div>
+    <div id="content" class="loading">Vérification en cours...</div>
+  </div>
+
+<script>
+async function verifier() {
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get("code");
+  const content = document.getElementById("content");
+  if (!code) {
+    content.innerHTML = `<div class="error-msg">Aucun code de vérification fourni.</div>`;
+    return;
+  }
+  try {
+    const res = await fetch(`/api/verifier/${encodeURIComponent(code)}`);
+    const data = await res.json();
+    if (!data.valide) {
+      content.innerHTML = `
+        <div class="status invalide"><span class="icon">✕</span> Document non reconnu</div>
+        <div class="footer-note">Ce code de vérification ne correspond à aucune quittance émise par TOURÉ IMMOBILIER. Le document pourrait être falsifié ou incorrect.</div>`;
+      return;
+    }
+    content.innerHTML = `
+      <div class="status valide"><span class="icon">✓</span> Quittance authentique</div>
+      <table>
+        <tr><td>N° de quittance</td><td>#${data.quittance_id}</td></tr>
+        <tr><td>Locataire</td><td>${data.locataire}</td></tr>
+        <tr><td>Bien loué</td><td>${data.maison}</td></tr>
+        <tr><td>Mois concerné</td><td>${data.mois_concerne}</td></tr>
+        <tr><td>Montant</td><td>${data.montant} ${data.devise}</td></tr>
+        <tr><td>Mode de paiement</td><td>${data.mode}</td></tr>
+        <tr><td>Statut</td><td>${data.statut}</td></tr>
+      </table>
+      <div class="footer-note">Ce document a été émis par ${data.societe} et son authenticité est confirmée.</div>`;
+  } catch (err) {
+    content.innerHTML = `<div class="error-msg">Erreur lors de la vérification. Réessayez plus tard.</div>`;
+  }
+}
+verifier();
+</script>
+</body>
+</html>

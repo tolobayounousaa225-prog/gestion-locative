@@ -7,10 +7,12 @@ Paiements en espèces. Génération de quittance PDF professionnelle après chaq
 """
 import io
 import os
+import secrets
+import calendar
 from datetime import date, datetime, timedelta
 from typing import List, Optional
 
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
@@ -21,9 +23,20 @@ from pydantic import BaseModel, ConfigDict
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
+from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
-from sqlalchemy import Column, Date as SADate, DateTime, Float, ForeignKey, Integer, String, create_engine
+from sqlalchemy import Boolean, Column, Date as SADate, DateTime, Float, ForeignKey, Integer, String, create_engine
 from sqlalchemy.orm import Session, declarative_base, relationship, sessionmaker
+
+try:
+    import qrcode
+except ImportError:
+    qrcode = None
+
+try:
+    import requests as http_requests
+except ImportError:
+    http_requests = None
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -41,6 +54,8 @@ SOCIETE_NOM = os.environ.get("SOCIETE_NOM", "TOURÉ IMMOBILIER")
 SOCIETE_TAGLINE = os.environ.get("SOCIETE_TAGLINE", "Gestion locative professionnelle")
 SOCIETE_GERANT = os.environ.get("SOCIETE_GERANT", "M. TOURÉ")
 DEVISE = os.environ.get("DEVISE", "FCFA")
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-3-5-haiku-20241022")
 
 connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
 engine = create_engine(DATABASE_URL, connect_args=connect_args)
@@ -115,6 +130,7 @@ class Paiement(Base):
     date_paiement = Column(SADate, nullable=True)
     mode = Column(String, default="especes")
     statut = Column(String, default="en_attente")  # paye / partiel / en_retard / en_attente
+    verification_code = Column(String, nullable=True, unique=True)
 
     bail = relationship("Bail", back_populates="paiements")
 
@@ -133,14 +149,42 @@ class Ticket(Base):
     maison = relationship("Maison", back_populates="tickets")
 
 
+class Depense(Base):
+    __tablename__ = "depenses"
+    id = Column(Integer, primary_key=True, index=True)
+    categorie = Column(String, nullable=False)  # salaire_gerant / entretien / taxes / autre ...
+    libelle = Column(String, nullable=False)
+    montant = Column(Float, nullable=False)
+    date_depense = Column(SADate, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Observation(Base):
+    __tablename__ = "observations"
+    id = Column(Integer, primary_key=True, index=True)
+    proprietaire_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    maison_id = Column(Integer, ForeignKey("maisons.id"), nullable=True)
+    message = Column(String, nullable=False)
+    date_creation = Column(DateTime, default=datetime.utcnow)
+    lu = Column(Boolean, default=False)
+    reponse = Column(String, nullable=True)
+    date_reponse = Column(DateTime, nullable=True)
+
+    proprietaire = relationship("User")
+    maison = relationship("Maison")
+
+
 Base.metadata.create_all(bind=engine)
 
 # Migration légère : ajoute proprietaire_id si la table maisons existait déjà sans cette colonne.
 try:
     with engine.connect() as conn:
-        cols = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(maisons)")] if DATABASE_URL.startswith("sqlite") else None
-        if cols is not None and "proprietaire_id" not in cols:
+        cols_maisons = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(maisons)")] if DATABASE_URL.startswith("sqlite") else None
+        if cols_maisons is not None and "proprietaire_id" not in cols_maisons:
             conn.exec_driver_sql("ALTER TABLE maisons ADD COLUMN proprietaire_id INTEGER")
+        cols_paiements = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(paiements)")] if DATABASE_URL.startswith("sqlite") else None
+        if cols_paiements is not None and "verification_code" not in cols_paiements:
+            conn.exec_driver_sql("ALTER TABLE paiements ADD COLUMN verification_code VARCHAR")
 except Exception:
     pass
 
@@ -238,6 +282,39 @@ class TicketOut(TicketIn):
     date_resolution: Optional[datetime] = None
 
 
+class DepenseIn(BaseModel):
+    categorie: str
+    libelle: str
+    montant: float
+    date_depense: date
+
+
+class DepenseOut(DepenseIn):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+
+
+class ObservationIn(BaseModel):
+    maison_id: Optional[int] = None
+    message: str
+
+
+class ObservationReponseIn(BaseModel):
+    reponse: str
+
+
+class ObservationOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    proprietaire_id: int
+    maison_id: Optional[int] = None
+    message: str
+    date_creation: datetime
+    lu: bool
+    reponse: Optional[str] = None
+    date_reponse: Optional[datetime] = None
+
+
 # ---------------------------------------------------------------------------
 # Utilitaires auth
 # ---------------------------------------------------------------------------
@@ -287,6 +364,17 @@ def require_gerant(current_user: User = Depends(get_current_user)) -> User:
 
 def owned_maison_ids(db: Session, user: User) -> List[int]:
     return [m.id for m in db.query(Maison.id).filter(Maison.proprietaire_id == user.id).all()]
+
+
+def generate_verification_code() -> str:
+    return secrets.token_hex(8)  # 16 caractères hexadécimaux
+
+
+def mois_precedent(mois: str) -> str:
+    annee, m = (int(x) for x in mois.split("-"))
+    if m == 1:
+        return f"{annee - 1}-12"
+    return f"{annee}-{m - 1:02d}"
 
 
 def ensure_default_admin():
@@ -525,6 +613,7 @@ def list_paiements(db: Session = Depends(get_db), current_user: User = Depends(g
 @app.post("/api/paiements", response_model=PaiementOut)
 def create_paiement(data: PaiementIn, db: Session = Depends(get_db), _: User = Depends(require_gerant)):
     paiement = Paiement(**data.model_dump())
+    paiement.verification_code = generate_verification_code()
     db.add(paiement)
     db.commit()
     db.refresh(paiement)
@@ -591,7 +680,7 @@ TEXT_DARK = colors.HexColor("#1F2937")
 MUTED = colors.HexColor("#6B7280")
 
 
-def generer_quittance_pdf(paiement, bail, maison, locataire) -> io.BytesIO:
+def generer_quittance_pdf(paiement, bail, maison, locataire, verify_url: str = "") -> io.BytesIO:
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
     width, height = A4
@@ -721,6 +810,7 @@ def generer_quittance_pdf(paiement, bail, maison, locataire) -> io.BytesIO:
     c.drawString(margin, y, "À conserver pendant trois ans (délai de prescription légale en matière de loyers).")
     y -= 22
 
+    signature_top = y
     c.setFillColor(TEXT_DARK)
     c.setFont("Helvetica", 9)
     c.drawString(margin, y, f"Fait le {date.today().strftime('%d/%m/%Y')}")
@@ -733,6 +823,24 @@ def generer_quittance_pdf(paiement, bail, maison, locataire) -> io.BytesIO:
     c.setFont("Helvetica-Oblique", 8)
     c.drawRightString(width - margin, y - 10, SOCIETE_GERANT)
 
+    # QR code d'authenticité
+    if qrcode is not None and verify_url:
+        try:
+            qr_img = qrcode.make(verify_url, box_size=4, border=1)
+            qr_buf = io.BytesIO()
+            qr_img.save(qr_buf, format="PNG")
+            qr_buf.seek(0)
+            qr_size = 24 * mm
+            qr_x = margin
+            qr_y = signature_top - qr_size + 6
+            c.drawImage(ImageReader(qr_buf), qr_x, qr_y, width=qr_size, height=qr_size, mask="auto")
+            c.setFillColor(MUTED)
+            c.setFont("Helvetica", 6.5)
+            c.drawString(qr_x, qr_y - 9, "Scannez pour vérifier")
+            c.drawString(qr_x, qr_y - 17, "l'authenticité du document")
+        except Exception:
+            pass
+
     c.showPage()
     c.save()
     buffer.seek(0)
@@ -740,7 +848,7 @@ def generer_quittance_pdf(paiement, bail, maison, locataire) -> io.BytesIO:
 
 
 @app.get("/api/paiements/{paiement_id}/quittance")
-def quittance_pdf(paiement_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def quittance_pdf(paiement_id: int, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     paiement = db.query(Paiement).get(paiement_id)
     if not paiement:
         raise HTTPException(404, "Paiement introuvable")
@@ -752,12 +860,43 @@ def quittance_pdf(paiement_id: int, db: Session = Depends(get_db), current_user:
         if not maison or maison.proprietaire_id != current_user.id:
             raise HTTPException(403, "Accès refusé à ce document")
 
-    buffer = generer_quittance_pdf(paiement, bail, maison, locataire)
+    if not paiement.verification_code:
+        paiement.verification_code = generate_verification_code()
+        db.commit()
+        db.refresh(paiement)
+
+    base_url = str(request.base_url).rstrip("/")
+    verify_url = f"{base_url}/verifier.html?code={paiement.verification_code}"
+
+    buffer = generer_quittance_pdf(paiement, bail, maison, locataire, verify_url)
     return StreamingResponse(
         buffer,
         media_type="application/pdf",
         headers={"Content-Disposition": f"attachment; filename=quittance_{paiement.id}.pdf"},
     )
+
+
+@app.get("/api/verifier/{code}")
+def verifier_quittance(code: str, db: Session = Depends(get_db)):
+    paiement = db.query(Paiement).filter(Paiement.verification_code == code).first()
+    if not paiement:
+        return {"valide": False}
+    bail = db.query(Bail).get(paiement.bail_id)
+    maison = db.query(Maison).get(bail.maison_id) if bail else None
+    locataire = db.query(Locataire).get(bail.locataire_id) if bail else None
+    return {
+        "valide": True,
+        "societe": SOCIETE_NOM,
+        "quittance_id": paiement.id,
+        "locataire": locataire.nom if locataire else "-",
+        "maison": maison.adresse if maison else "-",
+        "mois_concerne": paiement.mois_concerne,
+        "montant": paiement.montant,
+        "devise": DEVISE,
+        "date_paiement": str(paiement.date_paiement) if paiement.date_paiement else None,
+        "mode": paiement.mode,
+        "statut": paiement.statut,
+    }
 
 
 # ---------- Tickets maintenance ----------
@@ -799,6 +938,101 @@ def delete_ticket(ticket_id: int, db: Session = Depends(get_db), _: User = Depen
     if not ticket:
         raise HTTPException(404, "Ticket introuvable")
     db.delete(ticket)
+    db.commit()
+    return {"ok": True}
+
+
+# ---------- Dépenses (gérant uniquement) ----------
+@app.get("/api/depenses", response_model=List[DepenseOut])
+def list_depenses(db: Session = Depends(get_db), _: User = Depends(require_gerant)):
+    return db.query(Depense).order_by(Depense.date_depense.desc()).all()
+
+
+@app.post("/api/depenses", response_model=DepenseOut)
+def create_depense(data: DepenseIn, db: Session = Depends(get_db), _: User = Depends(require_gerant)):
+    depense = Depense(**data.model_dump())
+    db.add(depense)
+    db.commit()
+    db.refresh(depense)
+    return depense
+
+
+@app.put("/api/depenses/{depense_id}", response_model=DepenseOut)
+def update_depense(depense_id: int, data: DepenseIn, db: Session = Depends(get_db), _: User = Depends(require_gerant)):
+    depense = db.query(Depense).get(depense_id)
+    if not depense:
+        raise HTTPException(404, "Dépense introuvable")
+    for k, v in data.model_dump().items():
+        setattr(depense, k, v)
+    db.commit()
+    db.refresh(depense)
+    return depense
+
+
+@app.delete("/api/depenses/{depense_id}")
+def delete_depense(depense_id: int, db: Session = Depends(get_db), _: User = Depends(require_gerant)):
+    depense = db.query(Depense).get(depense_id)
+    if not depense:
+        raise HTTPException(404, "Dépense introuvable")
+    db.delete(depense)
+    db.commit()
+    return {"ok": True}
+
+
+# ---------- Observations (messages propriétaire -> gérant) ----------
+@app.get("/api/observations", response_model=List[ObservationOut])
+def list_observations(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    q = db.query(Observation)
+    if current_user.role == "proprietaire":
+        q = q.filter(Observation.proprietaire_id == current_user.id)
+    return q.order_by(Observation.date_creation.desc()).all()
+
+
+@app.post("/api/observations", response_model=ObservationOut)
+def create_observation(data: ObservationIn, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    if current_user.role != "proprietaire":
+        raise HTTPException(403, "Réservé aux propriétaires")
+    if data.maison_id:
+        maison = db.query(Maison).get(data.maison_id)
+        if not maison or maison.proprietaire_id != current_user.id:
+            raise HTTPException(403, "Ce bien ne vous appartient pas")
+    observation = Observation(proprietaire_id=current_user.id, maison_id=data.maison_id, message=data.message)
+    db.add(observation)
+    db.commit()
+    db.refresh(observation)
+    return observation
+
+
+@app.put("/api/observations/{observation_id}/repondre", response_model=ObservationOut)
+def repondre_observation(observation_id: int, data: ObservationReponseIn, db: Session = Depends(get_db), _: User = Depends(require_gerant)):
+    observation = db.query(Observation).get(observation_id)
+    if not observation:
+        raise HTTPException(404, "Observation introuvable")
+    observation.reponse = data.reponse
+    observation.date_reponse = datetime.utcnow()
+    observation.lu = True
+    db.commit()
+    db.refresh(observation)
+    return observation
+
+
+@app.put("/api/observations/{observation_id}/lu", response_model=ObservationOut)
+def marquer_lu_observation(observation_id: int, db: Session = Depends(get_db), _: User = Depends(require_gerant)):
+    observation = db.query(Observation).get(observation_id)
+    if not observation:
+        raise HTTPException(404, "Observation introuvable")
+    observation.lu = True
+    db.commit()
+    db.refresh(observation)
+    return observation
+
+
+@app.delete("/api/observations/{observation_id}")
+def delete_observation(observation_id: int, db: Session = Depends(get_db), _: User = Depends(require_gerant)):
+    observation = db.query(Observation).get(observation_id)
+    if not observation:
+        raise HTTPException(404, "Observation introuvable")
+    db.delete(observation)
     db.commit()
     return {"ok": True}
 
@@ -850,6 +1084,200 @@ def dashboard(db: Session = Depends(get_db), current_user: User = Depends(get_cu
         ],
         "tickets_ouverts": tickets_ouverts,
     }
+
+
+# ---------- Évolution mensuelle (pour graphique dashboard) ----------
+def _mois_range(n: int) -> List[str]:
+    """Retourne les n derniers mois (dont le mois courant), du plus ancien au plus récent, format AAAA-MM."""
+    today = date.today()
+    mois_list = []
+    annee, m = today.year, today.month
+    for _ in range(n):
+        mois_list.append(f"{annee}-{m:02d}")
+        m -= 1
+        if m == 0:
+            m = 12
+            annee -= 1
+    return list(reversed(mois_list))
+
+
+@app.get("/api/dashboard/evolution")
+def dashboard_evolution(mois: int = 6, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    is_owner = current_user.role == "proprietaire"
+    maison_ids = owned_maison_ids(db, current_user) if is_owner else None
+
+    q_baux_actifs = db.query(Bail).filter(Bail.statut == "actif")
+    if is_owner:
+        q_baux_actifs = q_baux_actifs.filter(Bail.maison_id.in_(maison_ids))
+    bail_ids = [b.id for b in q_baux_actifs.all()]
+    total_attendu = sum(b.loyer_mensuel for b in q_baux_actifs.all())
+
+    resultats = []
+    for m in _mois_range(max(1, min(mois, 24))):
+        q = db.query(Paiement).filter(Paiement.mois_concerne == m, Paiement.bail_id.in_(bail_ids) if bail_ids else False)
+        paiements_mois = q.all()
+        total_encaisse = sum(p.montant for p in paiements_mois if p.statut == "paye")
+        taux = round(total_encaisse / total_attendu * 100, 1) if total_attendu else 0
+        resultats.append({
+            "mois": m,
+            "total_attendu": total_attendu,
+            "total_encaisse": total_encaisse,
+            "taux_encaissement": taux,
+        })
+    return resultats
+
+
+# ---------- Bilan mensuel (analyse assistée par IA) ----------
+def analyse_reglebasee(stats: dict) -> str:
+    phrases = []
+    taux = stats["taux_encaissement"]
+    if taux >= 95:
+        phrases.append(f"Le taux d'encaissement du mois est excellent ({taux}%), les loyers ont été majoritairement recouvrés dans les délais.")
+    elif taux >= 75:
+        phrases.append(f"Le taux d'encaissement du mois est correct ({taux}%), mais une partie des loyers reste à recouvrer.")
+    else:
+        phrases.append(f"Le taux d'encaissement du mois est préoccupant ({taux}%) : une part importante des loyers attendus n'a pas été encaissée.")
+
+    if stats["nombre_impayes"] > 0:
+        phrases.append(f"{stats['nombre_impayes']} bail(aux) actif(s) présentent un impayé ce mois-ci ; un suivi rapproché des locataires concernés est recommandé.")
+    else:
+        phrases.append("Aucun impayé n'est à signaler ce mois-ci.")
+
+    if stats["resultat_net"] >= 0:
+        phrases.append(f"Après déduction des dépenses ({stats['total_depenses']:.0f} {DEVISE}), le résultat net du mois est positif : {stats['resultat_net']:.0f} {DEVISE}.")
+    else:
+        phrases.append(f"Après déduction des dépenses ({stats['total_depenses']:.0f} {DEVISE}), le résultat net du mois est négatif : {stats['resultat_net']:.0f} {DEVISE}. Une vigilance sur les charges est conseillée.")
+
+    var = stats.get("variation_encaisse_pct")
+    if var is not None:
+        if var > 5:
+            phrases.append(f"Les encaissements progressent de {var}% par rapport au mois précédent.")
+        elif var < -5:
+            phrases.append(f"Les encaissements reculent de {abs(var)}% par rapport au mois précédent, à surveiller.")
+        else:
+            phrases.append("Les encaissements sont globalement stables par rapport au mois précédent.")
+
+    if stats["tickets_ouverts_periode"] > 0:
+        phrases.append(f"{stats['tickets_ouverts_periode']} ticket(s) de maintenance ont été ouverts ce mois-ci, pour un coût cumulé de {stats['cout_tickets_mois']:.0f} {DEVISE}.")
+
+    return " ".join(phrases)
+
+
+def analyse_ia(stats: dict) -> Optional[str]:
+    if not ANTHROPIC_API_KEY or http_requests is None:
+        return None
+    try:
+        prompt = (
+            "Tu es un assistant de gestion locative. Rédige une analyse concise (4 à 6 phrases, en français) "
+            "du bilan mensuel suivant, avec un ton professionnel destiné au gérant d'un parc immobilier. "
+            "Mets en avant les points positifs, les points de vigilance (impayés, résultat net, évolution) "
+            "et une recommandation concrète si pertinent. Ne répète pas les chiffres bruts sans les interpréter.\n\n"
+            f"Données du mois {stats['mois']} :\n"
+            f"- Loyers attendus : {stats['total_attendu']} {DEVISE}\n"
+            f"- Loyers encaissés : {stats['total_encaisse']} {DEVISE}\n"
+            f"- Taux d'encaissement : {stats['taux_encaissement']}%\n"
+            f"- Nombre d'impayés : {stats['nombre_impayes']}\n"
+            f"- Dépenses du mois : {stats['total_depenses']} {DEVISE}\n"
+            f"- Résultat net : {stats['resultat_net']} {DEVISE}\n"
+            f"- Variation des encaissements vs mois précédent : {stats.get('variation_encaisse_pct')}%\n"
+            f"- Tickets de maintenance ouverts ce mois : {stats['tickets_ouverts_periode']} (coût : {stats['cout_tickets_mois']} {DEVISE})\n"
+            f"- Taux d'occupation actuel du parc : {stats['taux_occupation']}%\n"
+        )
+        resp = http_requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": ANTHROPIC_API_KEY,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json={
+                "model": ANTHROPIC_MODEL,
+                "max_tokens": 500,
+                "messages": [{"role": "user", "content": prompt}],
+            },
+            timeout=15,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            blocks = data.get("content", [])
+            texte = "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
+            return texte.strip() or None
+    except Exception:
+        return None
+    return None
+
+
+@app.get("/api/bilan/{mois}")
+def bilan_mensuel(mois: str, db: Session = Depends(get_db), _: User = Depends(require_gerant)):
+    total_maisons = db.query(Maison).count()
+    maisons_occupees = db.query(Maison).filter(Maison.statut == "occupee").count()
+    taux_occupation = round(maisons_occupees / total_maisons * 100, 1) if total_maisons else 0
+
+    baux_actifs = db.query(Bail).filter(Bail.statut == "actif").all()
+    total_attendu = sum(b.loyer_mensuel for b in baux_actifs)
+
+    paiements_mois = db.query(Paiement).filter(Paiement.mois_concerne == mois).all()
+    total_encaisse = sum(p.montant for p in paiements_mois if p.statut == "paye")
+    taux_encaissement = round(total_encaisse / total_attendu * 100, 1) if total_attendu else 0
+
+    bail_ids_payes = {p.bail_id for p in paiements_mois if p.statut == "paye"}
+    impayes = [b for b in baux_actifs if b.id not in bail_ids_payes]
+
+    try:
+        annee, m = (int(x) for x in mois.split("-"))
+        premier_jour = date(annee, m, 1)
+        dernier_jour = date(annee, m, calendar.monthrange(annee, m)[1])
+    except Exception:
+        raise HTTPException(400, "Format de mois invalide (attendu AAAA-MM)")
+
+    depenses_mois = db.query(Depense).filter(Depense.date_depense >= premier_jour, Depense.date_depense <= dernier_jour).all()
+    total_depenses = sum(d.montant for d in depenses_mois)
+    depenses_par_categorie = {}
+    for d in depenses_mois:
+        depenses_par_categorie[d.categorie] = depenses_par_categorie.get(d.categorie, 0) + d.montant
+
+    resultat_net = total_encaisse - total_depenses
+
+    tickets_mois = db.query(Ticket).filter(Ticket.date_creation >= datetime.combine(premier_jour, datetime.min.time()),
+                                            Ticket.date_creation <= datetime.combine(dernier_jour, datetime.max.time())).all()
+    cout_tickets_mois = sum(t.cout for t in tickets_mois)
+
+    mois_prec = mois_precedent(mois)
+    paiements_mois_prec = db.query(Paiement).filter(Paiement.mois_concerne == mois_prec, Paiement.statut == "paye").all()
+    total_encaisse_prec = sum(p.montant for p in paiements_mois_prec)
+    variation_encaisse_pct = round((total_encaisse - total_encaisse_prec) / total_encaisse_prec * 100, 1) if total_encaisse_prec else None
+
+    stats = {
+        "mois": mois,
+        "total_maisons": total_maisons,
+        "taux_occupation": taux_occupation,
+        "total_attendu": total_attendu,
+        "total_encaisse": total_encaisse,
+        "taux_encaissement": taux_encaissement,
+        "nombre_impayes": len(impayes),
+        "impayes": [
+            {"bail_id": b.id, "maison_id": b.maison_id, "locataire_id": b.locataire_id, "loyer_mensuel": b.loyer_mensuel}
+            for b in impayes
+        ],
+        "total_depenses": total_depenses,
+        "depenses_par_categorie": depenses_par_categorie,
+        "resultat_net": resultat_net,
+        "tickets_ouverts_periode": len(tickets_mois),
+        "cout_tickets_mois": cout_tickets_mois,
+        "variation_encaisse_pct": variation_encaisse_pct,
+    }
+
+    analyse = analyse_ia(stats)
+    source_analyse = "ia"
+    if not analyse:
+        analyse = analyse_reglebasee(stats)
+        source_analyse = "regles"
+
+    stats["analyse"] = analyse
+    stats["analyse_source"] = source_analyse
+    stats["genere_le"] = datetime.utcnow().isoformat()
+    stats["societe"] = SOCIETE_NOM
+    return stats
 
 
 # ---------- Fichiers statiques (frontend) ----------

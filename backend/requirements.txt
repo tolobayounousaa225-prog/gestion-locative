@@ -8,3 +8,6 @@ bcrypt==4.0.1
 python-jose[cryptography]==3.3.0
 reportlab==4.2.2
 psycopg2-binary==2.9.9
+qrcode==7.4.2
+Pillow==10.4.0
+requests==2.32.3
