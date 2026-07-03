@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gestion Locative</title>
+<style>
+  :root {
+    --bg: #f4f6f8;
+    --card: #ffffff;
+    --primary: #2563eb;
+    --primary-dark: #1d4ed8;
+    --text: #1f2937;
+    --muted: #6b7280;
+    --border: #e5e7eb;
+    --danger: #dc2626;
+    --ok: #16a34a;
+    --warn: #d97706;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif; background: var(--bg); color: var(--text); }
+  #login-screen { display: flex; align-items: center; justify-content: center; height: 100vh; }
+  .login-box { background: var(--card); padding: 32px; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,.08); width: 320px; }
+  .login-box h1 { font-size: 20px; margin-bottom: 20px; }
+  input, select, textarea { width: 100%; padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; margin-bottom: 10px; }
+  button { cursor: pointer; border: none; border-radius: 8px; padding: 9px 14px; font-size: 14px; background: var(--primary); color: white; }
+  button:hover { background: var(--primary-dark); }
+  button.secondary { background: #e5e7eb; color: var(--text); }
+  button.danger { background: var(--danger); }
+  .error { color: var(--danger); font-size: 13px; margin-bottom: 8px; }
+
+  #app { display: none; }
+  header { background: var(--card); border-bottom: 1px solid var(--border); padding: 12px 24px; display: flex; align-items: center; justify-content: space-between; }
+  header h1 { font-size: 18px; margin: 0; }
+  nav { display: flex; gap: 6px; padding: 10px 24px; background: var(--card); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  nav button { background: transparent; color: var(--muted); }
+  nav button.active { background: var(--primary); color: white; }
+  main { padding: 24px; max-width: 1100px; margin: 0 auto; }
+  .view { display: none; }
+  .view.active { display: block; }
+
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px,1fr)); gap: 14px; margin-bottom: 20px; }
+  .card { background: var(--card); border-radius: 10px; padding: 16px; box-shadow: 0 1px 4px rgba(0,0,0,.06); }
+  .card .value { font-size: 24px; font-weight: 700; }
+  .card .label { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+  .panel { background: var(--card); border-radius: 10px; padding: 18px; box-shadow: 0 1px 4px rgba(0,0,0,.06); margin-bottom: 18px; }
+  .panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+  .badge.occupee, .badge.actif, .badge.paye, .badge.resolu { background: #dcfce7; color: var(--ok); }
+  .badge.libre, .badge.en_attente, .badge.ouvert { background: #fef3c7; color: var(--warn); }
+  .badge.travaux, .badge.resilie, .badge.en_retard { background: #fee2e2; color: var(--danger); }
+  .badge.en_cours, .badge.partiel { background: #dbeafe; color: var(--primary); }
+
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .form-grid label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 3px; }
+  .actions-row { display: flex; gap: 6px; }
+  .actions-row button { padding: 5px 10px; font-size: 12px; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<!-- ================= LOGIN ================= -->
+<div id="login-screen">
+  <form class="login-box" id="login-form">
+    <h1>Gestion Locative — Connexion</h1>
+    <div class="error hidden" id="login-error"></div>
+    <label>Email</label>
+    <input type="email" id="login-email" required>
+    <label>Mot de passe</label>
+    <input type="password" id="login-password" required>
+    <button type="submit" style="width:100%">Se connecter</button>
+  </form>
+</div>
+
+<!-- ================= APP ================= -->
+<div id="app">
+  <header>
+    <h1>🏠 Gestion Locative</h1>
+    <button class="secondary" id="logout-btn">Déconnexion</button>
+  </header>
+  <nav id="main-nav">
+    <button data-view="dashboard" class="active">Tableau de bord</button>
+    <button data-view="maisons">Maisons</button>
+    <button data-view="locataires">Locataires</button>
+    <button data-view="baux">Baux</button>
+    <button data-view="paiements">Paiements</button>
+    <button data-view="tickets">Maintenance</button>
+  </nav>
+
+  <main>
+    <!-- DASHBOARD -->
+    <section class="view active" id="view-dashboard">
+      <div class="cards" id="dashboard-cards"></div>
+      <div class="panel">
+        <div class="panel-header"><strong>Baux impayés ce mois</strong></div>
+        <table><thead><tr><th>Bail</th><th>Maison</th><th>Loyer</th></tr></thead>
+          <tbody id="dashboard-impayes"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- MAISONS -->
+    <section class="view" id="view-maisons">
+      <div class="panel">
+        <div class="panel-header"><strong>Nouvelle maison</strong></div>
+        <form id="form-maison" class="form-grid">
+          <div><label>Adresse</label><input name="adresse" required></div>
+          <div><label>Propriétaire</label><input name="proprietaire"></div>
+          <div><label>Nb pièces</label><input name="nb_pieces" type="number" value="1"></div>
+          <div><label>Loyer de référence</label><input name="loyer_reference" type="number" step="0.01" value="0"></div>
+          <div><label>Statut</label>
+            <select name="statut"><option value="libre">Libre</option><option value="occupee">Occupée</option><option value="travaux">En travaux</option></select>
+          </div>
+          <div style="align-self:end"><button type="submit">Ajouter</button></div>
+        </form>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><strong>Maisons</strong></div>
+        <table><thead><tr><th>Adresse</th><th>Propriétaire</th><th>Pièces</th><th>Loyer réf.</th><th>Statut</th><th></th></tr></thead>
+          <tbody id="maisons-list"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- LOCATAIRES -->
+    <section class="view" id="view-locataires">
+      <div class="panel">
+        <div class="panel-header"><strong>Nouveau locataire</strong></div>
+        <form id="form-locataire" class="form-grid">
+          <div><label>Nom</label><input name="nom" required></div>
+          <div><label>Téléphone</label><input name="telephone"></div>
+          <div><label>Pièce d'identité</label><input name="piece_identite"></div>
+          <div><label>Contact d'urgence</label><input name="contact_urgence"></div>
+          <div style="align-self:end"><button type="submit">Ajouter</button></div>
+        </form>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><strong>Locataires</strong></div>
+        <table><thead><tr><th>Nom</th><th>Téléphone</th><th>Pièce ID</th><th>Contact urgence</th><th></th></tr></thead>
+          <tbody id="locataires-list"></tbody>
+        </table>
+      </div>
+    </section>
+
+<!-- BAUX -->
+    <section class="view" id="view-baux">
+      <div class="panel">
+        <div class="panel-header"><strong>Nouveau bail</strong></div>
+        <form id="form-bail" class="form-grid">
+          <div><label>Maison</label><select name="maison_id" id="bail-maison-select" required></select></div>
+          <div><label>Locataire</label><select name="locataire_id" id="bail-locataire-select" required></select></div>
+          <div><label>Date de début</label><input name="date_debut" type="date" required></div>
+          <div><label>Date de fin (optionnel)</label><input name="date_fin" type="date"></div>
+          <div><label>Loyer mensuel</label><input name="loyer_mensuel" type="number" step="0.01" required></div>
+          <div><label>Caution</label><input name="caution" type="number" step="0.01" value="0"></div>
+          <div style="align-self:end"><button type="submit">Créer le bail</button></div>
+        </form>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><strong>Baux</strong></div>
+        <table><thead><tr><th>Maison</th><th>Locataire</th><th>Début</th><th>Loyer</th><th>Statut</th><th></th></tr></thead>
+          <tbody id="baux-list"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- PAIEMENTS -->
+    <section class="view" id="view-paiements">
+      <div class="panel">
+        <div class="panel-header"><strong>Enregistrer un encaissement</strong></div>
+        <form id="form-paiement" class="form-grid">
+          <div><label>Bail</label><select name="bail_id" id="paiement-bail-select" required></select></div>
+          <div><label>Mois concerné (AAAA-MM)</label><input name="mois_concerne" placeholder="2026-07" required></div>
+          <div><label>Montant</label><input name="montant" type="number" step="0.01" required></div>
+          <div><label>Date de paiement</label><input name="date_paiement" type="date"></div>
+          <div><label>Mode</label>
+            <select name="mode"><option value="especes">Espèces</option><option value="mobile_money">Mobile money</option><option value="virement">Virement</option></select>
+          </div>
+          <div><label>Statut</label>
+            <select name="statut"><option value="paye">Payé</option><option value="partiel">Partiel</option><option value="en_retard">En retard</option></select>
+          </div>
+          <div style="align-self:end"><button type="submit">Enregistrer</button></div>
+        </form>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><strong>Historique des paiements</strong></div>
+        <table><thead><tr><th>Bail</th><th>Mois</th><th>Montant</th><th>Mode</th><th>Statut</th><th></th></tr></thead>
+          <tbody id="paiements-list"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- TICKETS -->
+    <section class="view" id="view-tickets">
+      <div class="panel">
+        <div class="panel-header"><strong>Nouveau ticket de maintenance</strong></div>
+        <form id="form-ticket" class="form-grid">
+          <div><label>Maison</label><select name="maison_id" id="ticket-maison-select" required></select></div>
+          <div><label>Locataire (optionnel)</label><select name="locataire_id" id="ticket-locataire-select"><option value="">—</option></select></div>
+          <div style="grid-column:1/-1"><label>Description</label><textarea name="description" required></textarea></div>
+          <div><label>Coût estimé</label><input name="cout" type="number" step="0.01" value="0"></div>
+          <div style="align-self:end"><button type="submit">Créer le ticket</button></div>
+        </form>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><strong>Tickets</strong></div>
+        <table><thead><tr><th>Maison</th><th>Description</th><th>Coût</th><th>Statut</th><th></th></tr></thead>
+          <tbody id="tickets-list"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+const API = "/api";
+let TOKEN = localStorage.getItem("gl_token") || null;
+let CACHE = { maisons: [], locataires: [], baux: [], paiements: [], tickets: [] };
+
+// ---------- Auth ----------
+function authHeaders(extra = {}) {
+  return TOKEN ? { ...extra, Authorization: `Bearer ${TOKEN}` } : extra;
+}
+
+async function apiFetch(path, options = {}) {
+  const res = await fetch(API + path, {
+    ...options,
+    headers: authHeaders({ "Content-Type": "application/json", ...(options.headers || {}) }),
+  });
+  if (res.status === 401) { logout(); throw new Error("Session expirée"); }
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `Erreur ${res.status}`);
+  }
+  if (res.status === 204) return null;
+  const ct = res.headers.get("content-type") || "";
+  return ct.includes("application/json") ? res.json() : res;
+}
+
+document.getElementById("login-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const email = document.getElementById("login-email").value;
+  const password = document.getElementById("login-password").value;
+  const errBox = document.getElementById("login-error");
+  errBox.classList.add("hidden");
+  try {
+    const body = new URLSearchParams();
+    body.set("username", email);
+    body.set("password", password);
+    const res = await fetch(API + "/auth/login", { method: "POST", body });
+    if (!res.ok) throw new Error("Email ou mot de passe incorrect");
+    const data = await res.json();
+    TOKEN = data.access_token;
+    localStorage.setItem("gl_token", TOKEN);
+    showApp();
+  } catch (err) {
+    errBox.textContent = err.message;
+    errBox.classList.remove("hidden");
+  }
+});
+
+document.getElementById("logout-btn").addEventListener("click", logout);
+function logout() {
+  TOKEN = null;
+  localStorage.removeItem("gl_token");
+  document.getElementById("app").style.display = "none";
+  document.getElementById("login-screen").style.display = "flex";
+}
+
+async function showApp() {
+  document.getElementById("login-screen").style.display = "none";
+  document.getElementById("app").style.display = "block";
+  await refreshAll();
+  showView("dashboard");
+}
+
+// ---------- Navigation ----------
+document.getElementById("main-nav").addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-view]");
+  if (!btn) return;
+  showView(btn.dataset.view);
+});
+
+function showView(name) {
+  document.querySelectorAll("nav button").forEach(b => b.classList.toggle("active", b.dataset.view === name));
+  document.querySelectorAll(".view").forEach(v => v.classList.toggle("active", v.id === "view-" + name));
+}
+
+// ---------- Data loading ----------
+async function refreshAll() {
+  const [maisons, locataires, baux, paiements, tickets] = await Promise.all([
+    apiFetch("/maisons"), apiFetch("/locataires"), apiFetch("/baux"), apiFetch("/paiements"), apiFetch("/tickets"),
+  ]);
+  CACHE = { maisons, locataires, baux, paiements, tickets };
+  renderDashboard();
+  renderMaisons();
+  renderLocataires();
+  renderBaux();
+  renderPaiements();
+  renderTickets();
+  fillSelectors();
+}
+
+function badge(text) { return `<span class="badge ${text}">${text.replace("_", " ")}</span>`; }
+function maisonAdresse(id) { return CACHE.maisons.find(m => m.id === id)?.adresse || "—"; }
+function locataireNom(id) { return CACHE.locataires.find(l => l.id === id)?.nom || "—"; }
+
+// ---------- Dashboard ----------
+async function renderDashboard() {
+  const d = await apiFetch("/dashboard");
+  document.getElementById("dashboard-cards").innerHTML = `
+    <div class="card"><div class="value">${d.total_maisons}</div><div class="label">Maisons</div></div>
+    <div class="card"><div class="value">${d.taux_occupation}%</div><div class="label">Taux d'occupation</div></div>
+    <div class="card"><div class="value">${d.total_attendu}</div><div class="label">Loyers attendus (${d.mois})</div></div>
+    <div class="card"><div class="value">${d.total_encaisse}</div><div class="label">Loyers encaissés</div></div>
+    <div class="card"><div class="value">${d.nombre_impayes}</div><div class="label">Impayés</div></div>
+    <div class="card"><div class="value">${d.tickets_ouverts}</div><div class="label">Tickets ouverts</div></div>
+  `;
+  document.getElementById("dashboard-impayes").innerHTML = d.impayes.map(i => `
+    <tr><td>#${i.bail_id}</td><td>${maisonAdresse(i.maison_id)}</td><td>${i.loyer_mensuel}</td></tr>
+  `).join("") || `<tr><td colspan="3">Aucun impayé 🎉</td></tr>`;
+}
+
+// ---------- Maisons ----------
+document.getElementById("form-maison").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  await apiFetch("/maisons", { method: "POST", body: JSON.stringify({
+    adresse: f.get("adresse"), proprietaire: f.get("proprietaire") || null,
+    nb_pieces: Number(f.get("nb_pieces")), loyer_reference: Number(f.get("loyer_reference")),
+    statut: f.get("statut"),
+  })});
+  e.target.reset();
+  await refreshAll();
+});
+
+function renderMaisons() {
+  document.getElementById("maisons-list").innerHTML = CACHE.maisons.map(m => `
+    <tr>
+      <td>${m.adresse}</td><td>${m.proprietaire || "—"}</td><td>${m.nb_pieces}</td>
+      <td>${m.loyer_reference}</td><td>${badge(m.statut)}</td>
+      <td class="actions-row"><button class="danger" onclick="deleteItem('maisons', ${m.id})">Suppr.</button></td>
+    </tr>`).join("") || `<tr><td colspan="6">Aucune maison</td></tr>`;
+}
+
+// ---------- Locataires ----------
+document.getElementById("form-locataire").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  await apiFetch("/locataires", { method: "POST", body: JSON.stringify({
+    nom: f.get("nom"), telephone: f.get("telephone") || null,
+    piece_identite: f.get("piece_identite") || null, contact_urgence: f.get("contact_urgence") || null,
+  })});
+  e.target.reset();
+  await refreshAll();
+});
+
+function renderLocataires() {
+  document.getElementById("locataires-list").innerHTML = CACHE.locataires.map(l => `
+    <tr>
+      <td>${l.nom}</td><td>${l.telephone || "—"}</td><td>${l.piece_identite || "—"}</td><td>${l.contact_urgence || "—"}</td>
+      <td class="actions-row"><button class="danger" onclick="deleteItem('locataires', ${l.id})">Suppr.</button></td>
+    </tr>`).join("") || `<tr><td colspan="5">Aucun locataire</td></tr>`;
+}
+
+// ---------- Baux ----------
+document.getElementById("form-bail").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  await apiFetch("/baux", { method: "POST", body: JSON.stringify({
+    maison_id: Number(f.get("maison_id")), locataire_id: Number(f.get("locataire_id")),
+    date_debut: f.get("date_debut"), date_fin: f.get("date_fin") || null,
+    loyer_mensuel: Number(f.get("loyer_mensuel")), caution: Number(f.get("caution")), statut: "actif",
+  })});
+  e.target.reset();
+  await refreshAll();
+});
+
+function renderBaux() {
+  document.getElementById("baux-list").innerHTML = CACHE.baux.map(b => `
+    <tr>
+      <td>${maisonAdresse(b.maison_id)}</td><td>${locataireNom(b.locataire_id)}</td>
+      <td>${b.date_debut}</td><td>${b.loyer_mensuel}</td><td>${badge(b.statut)}</td>
+      <td class="actions-row">
+        ${b.statut === "actif" ? `<button class="secondary" onclick="resilierBail(${b.id})">Résilier</button>` : ""}
+        <button class="danger" onclick="deleteItem('baux', ${b.id})">Suppr.</button>
+      </td>
+    </tr>`).join("") || `<tr><td colspan="6">Aucun bail</td></tr>`;
+}
+
+async function resilierBail(id) {
+  const bail = CACHE.baux.find(b => b.id === id);
+  if (!bail) return;
+  await apiFetch(`/baux/${id}`, { method: "PUT", body: JSON.stringify({ ...bail, statut: "resilie" }) });
+  await refreshAll();
+}
+
+// ---------- Paiements ----------
+document.getElementById("form-paiement").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  await apiFetch("/paiements", { method: "POST", body: JSON.stringify({
+    bail_id: Number(f.get("bail_id")), mois_concerne: f.get("mois_concerne"),
+    montant: Number(f.get("montant")), date_paiement: f.get("date_paiement") || null,
+    mode: f.get("mode"), statut: f.get("statut"),
+  })});
+  e.target.reset();
+  await refreshAll();
+});
+
+function renderPaiements() {
+  document.getElementById("paiements-list").innerHTML = CACHE.paiements.map(p => `
+    <tr>
+      <td>#${p.bail_id} — ${maisonAdresse(CACHE.baux.find(b => b.id === p.bail_id)?.maison_id)}</td>
+      <td>${p.mois_concerne}</td><td>${p.montant}</td><td>${p.mode.replace("_"," ")}</td><td>${badge(p.statut)}</td>
+      <td class="actions-row"><button class="secondary" onclick="telechargerQuittance(${p.id})">Quittance PDF</button></td>
+    </tr>`).join("") || `<tr><td colspan="6">Aucun paiement</td></tr>`;
+}
+
+async function telechargerQuittance(paiementId) {
+  const res = await fetch(`${API}/paiements/${paiementId}/quittance`, { headers: authHeaders() });
+  if (!res.ok) { alert("Impossible de générer la quittance"); return; }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = `quittance_${paiementId}.pdf`; a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ---------- Tickets ----------
+document.getElementById("form-ticket").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  await apiFetch("/tickets", { method: "POST", body: JSON.stringify({
+    maison_id: Number(f.get("maison_id")), locataire_id: f.get("locataire_id") ? Number(f.get("locataire_id")) : null,
+    description: f.get("description"), cout: Number(f.get("cout")), statut: "ouvert",
+  })});
+  e.target.reset();
+  await refreshAll();
+});
+
+function renderTickets() {
+  document.getElementById("tickets-list").innerHTML = CACHE.tickets.map(t => `
+    <tr>
+      <td>${maisonAdresse(t.maison_id)}</td><td>${t.description}</td><td>${t.cout}</td><td>${badge(t.statut)}</td>
+      <td class="actions-row">
+        ${t.statut !== "resolu" ? `<button onclick="avancerTicket(${t.id}, '${t.statut === 'ouvert' ? 'en_cours' : 'resolu'}')">${t.statut === "ouvert" ? "Prendre en charge" : "Marquer résolu"}</button>` : ""}
+        <button class="danger" onclick="deleteItem('tickets', ${t.id})">Suppr.</button>
+      </td>
+    </tr>`).join("") || `<tr><td colspan="5">Aucun ticket</td></tr>`;
+}
+
+async function avancerTicket(id, nouveauStatut) {
+  const ticket = CACHE.tickets.find(t => t.id === id);
+  if (!ticket) return;
+  await apiFetch(`/tickets/${id}`, { method: "PUT", body: JSON.stringify({ ...ticket, statut: nouveauStatut }) });
+  await refreshAll();
+}
+
+// ---------- Selecteurs ----------
+function fillSelectors() {
+  const maisonOptions = CACHE.maisons.map(m => `<option value="${m.id}">${m.adresse}</option>`).join("");
+  const locataireOptions = CACHE.locataires.map(l => `<option value="${l.id}">${l.nom}</option>`).join("");
+  const bailOptions = CACHE.baux.filter(b => b.statut === "actif").map(b => `<option value="${b.id}">#${b.id} — ${maisonAdresse(b.maison_id)} / ${locataireNom(b.locataire_id)}</option>`).join("");
+
+  document.getElementById("bail-maison-select").innerHTML = maisonOptions;
+  document.getElementById("bail-locataire-select").innerHTML = locataireOptions;
+  document.getElementById("ticket-maison-select").innerHTML = maisonOptions;
+  document.getElementById("ticket-locataire-select").innerHTML = `<option value="">—</option>` + locataireOptions;
+  document.getElementById("paiement-bail-select").innerHTML = bailOptions;
+}
+
+// ---------- Suppression générique ----------
+async function deleteItem(resource, id) {
+  if (!confirm("Confirmer la suppression ?")) return;
+  await apiFetch(`/${resource}/${id}`, { method: "DELETE" });
+  await refreshAll();
+}
+
+// ---------- Démarrage ----------
+if (TOKEN) { showApp().catch(() => logout()); }
+</script>
+</body>
+</html>

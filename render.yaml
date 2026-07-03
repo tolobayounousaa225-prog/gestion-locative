@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: gestion-locative
+    runtime: python
+    plan: free
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT --app-dir backend
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ADMIN_EMAIL
+        value: admin@gestion-locative.local
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: gestion-locative-db
+          property: connectionString
+
+databases:
+  - name: gestion-locative-db
+    plan: free
