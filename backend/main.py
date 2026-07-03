@@ -176,15 +176,32 @@ class Observation(Base):
 
 Base.metadata.create_all(bind=engine)
 
-# Migration légère : ajoute proprietaire_id si la table maisons existait déjà sans cette colonne.
+# Migration légère : ajoute les colonnes manquantes si les tables existaient déjà sans elles.
+# Compatible SQLite (dev) et PostgreSQL (prod sur Render) — utilise l'inspecteur SQLAlchemy
+# plutôt que PRAGMA (spécifique SQLite) pour fonctionner quel que soit le moteur de base.
 try:
-    with engine.connect() as conn:
-        cols_maisons = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(maisons)")] if DATABASE_URL.startswith("sqlite") else None
-        if cols_maisons is not None and "proprietaire_id" not in cols_maisons:
-            conn.exec_driver_sql("ALTER TABLE maisons ADD COLUMN proprietaire_id INTEGER")
-        cols_paiements = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(paiements)")] if DATABASE_URL.startswith("sqlite") else None
-        if cols_paiements is not None and "verification_code" not in cols_paiements:
-            conn.exec_driver_sql("ALTER TABLE paiements ADD COLUMN verification_code VARCHAR")
+    from sqlalchemy import inspect as _sa_inspect
+
+    _inspector = _sa_inspect(engine)
+    _existing_tables = _inspector.get_table_names()
+
+    def _add_column_if_missing(table: str, column: str, ddl_type: str) -> None:
+        if table not in _existing_tables:
+            return
+        try:
+            cols = [c["name"] for c in _inspector.get_columns(table)]
+        except Exception:
+            return
+        if column in cols:
+            return
+        try:
+            with engine.begin() as conn:
+                conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}")
+        except Exception:
+            pass
+
+    _add_column_if_missing("maisons", "proprietaire_id", "INTEGER")
+    _add_column_if_missing("paiements", "verification_code", "VARCHAR")
 except Exception:
     pass
 
@@ -721,7 +738,7 @@ def generer_quittance_pdf(paiement, bail, maison, locataire, verify_url: str = "
         ("BAILLEUR", [
             SOCIETE_NOM,
             f"Représenté par {SOCIETE_GERANT}",
-            f"Gestionnaire du bien loué",
+            "Gestionnaire du bien loué",
         ]),
         ("LOCATAIRE", [
             locataire.nom if locataire else "-",
@@ -810,7 +827,6 @@ def generer_quittance_pdf(paiement, bail, maison, locataire, verify_url: str = "
     c.drawString(margin, y, "À conserver pendant trois ans (délai de prescription légale en matière de loyers).")
     y -= 22
 
-    signature_top = y
     c.setFillColor(TEXT_DARK)
     c.setFont("Helvetica", 9)
     c.drawString(margin, y, f"Fait le {date.today().strftime('%d/%m/%Y')}")
@@ -823,16 +839,20 @@ def generer_quittance_pdf(paiement, bail, maison, locataire, verify_url: str = "
     c.setFont("Helvetica-Oblique", 8)
     c.drawRightString(width - margin, y - 10, SOCIETE_GERANT)
 
-    # QR code d'authenticité
+    # QR code d'authenticité — placé sous le bloc signature, avec une marge de sécurité
+    # pour ne chevaucher ni le texte "Fait le...", ni la ligne de signature.
+    bas_bloc_signature = y - 10
     if qrcode is not None and verify_url:
         try:
             qr_img = qrcode.make(verify_url, box_size=4, border=1)
             qr_buf = io.BytesIO()
             qr_img.save(qr_buf, format="PNG")
             qr_buf.seek(0)
-            qr_size = 24 * mm
+            qr_size = 22 * mm
             qr_x = margin
-            qr_y = signature_top - qr_size + 6
+            qr_y = bas_bloc_signature - 12 * mm - qr_size
+            if qr_y - 17 < margin:
+                qr_y = margin + 17
             c.drawImage(ImageReader(qr_buf), qr_x, qr_y, width=qr_size, height=qr_size, mask="auto")
             c.setFillColor(MUTED)
             c.setFont("Helvetica", 6.5)
