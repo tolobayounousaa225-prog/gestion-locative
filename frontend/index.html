@@ -284,8 +284,9 @@
     <section class="view" id="view-maisons">
       <div class="page-title"><div class="bar"></div><h2>Maisons</h2></div>
       <div class="panel gerant-only">
-        <div class="panel-header"><strong>Nouvelle maison</strong></div>
+        <div class="panel-header"><strong id="maison-form-title">Nouvelle maison</strong></div>
         <form id="form-maison" class="form-grid">
+          <input type="hidden" name="edit_id" id="maison-edit-id">
           <div><label>Adresse</label><input name="adresse" required></div>
           <div><label>Propriétaire</label><select name="proprietaire_id" id="maison-proprietaire-select"><option value="">— Aucun (libre) —</option></select></div>
           <div><label>Nb pièces</label><input name="nb_pieces" type="number" value="1"></div>
@@ -293,7 +294,10 @@
           <div><label>Statut</label>
             <select name="statut"><option value="libre">Libre</option><option value="occupee">Occupée</option><option value="travaux">En travaux</option></select>
           </div>
-          <div style="align-self:end"><button type="submit">Ajouter</button></div>
+          <div style="align-self:end; display:flex; gap:6px;">
+            <button type="submit" id="maison-submit-btn">Ajouter</button>
+            <button type="button" class="secondary hidden" id="maison-cancel-btn" onclick="annulerEditMaison()">Annuler</button>
+          </div>
         </form>
       </div>
       <div class="panel">
@@ -672,21 +676,57 @@ document.getElementById("form-maison").addEventListener("submit", async (e) => {
   e.preventDefault();
   const f = new FormData(e.target);
   const propId = f.get("proprietaire_id");
-  await apiFetch("/maisons", { method: "POST", body: JSON.stringify({
+  const editId = f.get("edit_id");
+  const payload = {
     adresse: f.get("adresse"), proprietaire_id: propId ? Number(propId) : null,
     nb_pieces: Number(f.get("nb_pieces")), loyer_reference: Number(f.get("loyer_reference")),
     statut: f.get("statut"),
-  })});
-  e.target.reset();
-  await refreshAll();
+  };
+  try {
+    if (editId) {
+      await apiFetch(`/maisons/${editId}`, { method: "PUT", body: JSON.stringify(payload) });
+    } else {
+      await apiFetch("/maisons", { method: "POST", body: JSON.stringify(payload) });
+    }
+    annulerEditMaison();
+    await refreshAll();
+  } catch (err) {
+    alert(err.message);
+  }
 });
+
+function editMaison(m) {
+  const form = document.getElementById("form-maison");
+  form.adresse.value = m.adresse || "";
+  form.proprietaire_id.value = m.proprietaire_id || "";
+  form.nb_pieces.value = m.nb_pieces;
+  form.loyer_reference.value = m.loyer_reference;
+  form.statut.value = m.statut;
+  document.getElementById("maison-edit-id").value = m.id;
+  document.getElementById("maison-form-title").textContent = `Modifier — ${m.adresse}`;
+  document.getElementById("maison-submit-btn").textContent = "Enregistrer les modifications";
+  document.getElementById("maison-cancel-btn").classList.remove("hidden");
+  document.getElementById("view-maisons").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function annulerEditMaison() {
+  const form = document.getElementById("form-maison");
+  form.reset();
+  document.getElementById("maison-edit-id").value = "";
+  document.getElementById("maison-form-title").textContent = "Nouvelle maison";
+  document.getElementById("maison-submit-btn").textContent = "Ajouter";
+  document.getElementById("maison-cancel-btn").classList.add("hidden");
+}
 
 function renderMaisons() {
   document.getElementById("maisons-list").innerHTML = CACHE.maisons.map(m => `
     <tr>
       <td>${m.adresse}</td><td>${m.proprietaire || proprietaireNom(m.proprietaire_id) || "—"}</td><td>${m.nb_pieces}</td>
       <td>${m.loyer_reference}</td><td>${badge(m.statut)}</td>
-      <td class="actions-row gerant-only ${ME && ME.role !== 'gerant' ? 'hidden' : ''}"><button class="danger" onclick="deleteItem('maisons', ${m.id})">Suppr.</button></td>
+      <td class="actions-row gerant-only ${ME && ME.role !== 'gerant' ? 'hidden' : ''}">
+        <button class="secondary" onclick='editMaison(${JSON.stringify(m).replace(/'/g, "&apos;")})'>Modifier</button>
+        <button class="danger" onclick="deleteItem('maisons', ${m.id})">Suppr.</button>
+      </td>
     </tr>`).join("") || `<tr><td colspan="6" class="empty-note">Aucune maison</td></tr>`;
 }
 
@@ -699,13 +739,17 @@ document.getElementById("form-locataire").addEventListener("submit", async (e) =
     nom: f.get("nom"), telephone: f.get("telephone") || null,
     piece_identite: f.get("piece_identite") || null, contact_urgence: f.get("contact_urgence") || null,
   };
-  if (editId) {
-    await apiFetch(`/locataires/${editId}`, { method: "PUT", body: JSON.stringify(payload) });
-  } else {
-    await apiFetch("/locataires", { method: "POST", body: JSON.stringify(payload) });
+  try {
+    if (editId) {
+      await apiFetch(`/locataires/${editId}`, { method: "PUT", body: JSON.stringify(payload) });
+    } else {
+      await apiFetch("/locataires", { method: "POST", body: JSON.stringify(payload) });
+    }
+    annulerEditLocataire();
+    await refreshAll();
+  } catch (err) {
+    alert(err.message);
   }
-  annulerEditLocataire();
-  await refreshAll();
 });
 
 function editLocataire(l) {
@@ -745,13 +789,17 @@ function renderLocataires() {
 document.getElementById("form-bail").addEventListener("submit", async (e) => {
   e.preventDefault();
   const f = new FormData(e.target);
-  await apiFetch("/baux", { method: "POST", body: JSON.stringify({
-    maison_id: Number(f.get("maison_id")), locataire_id: Number(f.get("locataire_id")),
-    date_debut: f.get("date_debut"), date_fin: f.get("date_fin") || null,
-    loyer_mensuel: Number(f.get("loyer_mensuel")), caution: Number(f.get("caution")), statut: "actif",
-  })});
-  e.target.reset();
-  await refreshAll();
+  try {
+    await apiFetch("/baux", { method: "POST", body: JSON.stringify({
+      maison_id: Number(f.get("maison_id")), locataire_id: Number(f.get("locataire_id")),
+      date_debut: f.get("date_debut"), date_fin: f.get("date_fin") || null,
+      loyer_mensuel: Number(f.get("loyer_mensuel")), caution: Number(f.get("caution")), statut: "actif",
+    })});
+    e.target.reset();
+    await refreshAll();
+  } catch (err) {
+    alert(err.message);
+  }
 });
 
 function renderBaux() {
@@ -770,21 +818,29 @@ function renderBaux() {
 async function resilierBail(id) {
   const bail = CACHE.baux.find(b => b.id === id);
   if (!bail) return;
-  await apiFetch(`/baux/${id}`, { method: "PUT", body: JSON.stringify({ ...bail, statut: "resilie" }) });
-  await refreshAll();
+  try {
+    await apiFetch(`/baux/${id}`, { method: "PUT", body: JSON.stringify({ ...bail, statut: "resilie" }) });
+    await refreshAll();
+  } catch (err) {
+    alert(err.message);
+  }
 }
 
 // ---------- Paiements ----------
 document.getElementById("form-paiement").addEventListener("submit", async (e) => {
   e.preventDefault();
   const f = new FormData(e.target);
-  await apiFetch("/paiements", { method: "POST", body: JSON.stringify({
-    bail_id: Number(f.get("bail_id")), mois_concerne: f.get("mois_concerne"),
-    montant: Number(f.get("montant")), date_paiement: f.get("date_paiement") || null,
-    mode: f.get("mode"), statut: f.get("statut"),
-  })});
-  e.target.reset();
-  await refreshAll();
+  try {
+    await apiFetch("/paiements", { method: "POST", body: JSON.stringify({
+      bail_id: Number(f.get("bail_id")), mois_concerne: f.get("mois_concerne"),
+      montant: Number(f.get("montant")), date_paiement: f.get("date_paiement") || null,
+      mode: f.get("mode"), statut: f.get("statut"),
+    })});
+    e.target.reset();
+    await refreshAll();
+  } catch (err) {
+    alert(err.message);
+  }
 });
 
 function renderPaiements() {
@@ -810,12 +866,16 @@ async function telechargerQuittance(paiementId) {
 document.getElementById("form-ticket").addEventListener("submit", async (e) => {
   e.preventDefault();
   const f = new FormData(e.target);
-  await apiFetch("/tickets", { method: "POST", body: JSON.stringify({
-    maison_id: Number(f.get("maison_id")), locataire_id: f.get("locataire_id") ? Number(f.get("locataire_id")) : null,
-    description: f.get("description"), cout: Number(f.get("cout")), statut: "ouvert",
-  })});
-  e.target.reset();
-  await refreshAll();
+  try {
+    await apiFetch("/tickets", { method: "POST", body: JSON.stringify({
+      maison_id: Number(f.get("maison_id")), locataire_id: f.get("locataire_id") ? Number(f.get("locataire_id")) : null,
+      description: f.get("description"), cout: Number(f.get("cout")), statut: "ouvert",
+    })});
+    e.target.reset();
+    await refreshAll();
+  } catch (err) {
+    alert(err.message);
+  }
 });
 
 function renderTickets() {
@@ -833,8 +893,12 @@ function renderTickets() {
 async function avancerTicket(id, nouveauStatut) {
   const ticket = CACHE.tickets.find(t => t.id === id);
   if (!ticket) return;
-  await apiFetch(`/tickets/${id}`, { method: "PUT", body: JSON.stringify({ ...ticket, statut: nouveauStatut }) });
-  await refreshAll();
+  try {
+    await apiFetch(`/tickets/${id}`, { method: "PUT", body: JSON.stringify({ ...ticket, statut: nouveauStatut }) });
+    await refreshAll();
+  } catch (err) {
+    alert(err.message);
+  }
 }
 
 // ---------- Utilisateurs ----------
@@ -871,12 +935,16 @@ if (depenseForm) {
   depenseForm.addEventListener("submit", async (e) => {
     e.preventDefault();
     const f = new FormData(e.target);
-    await apiFetch("/depenses", { method: "POST", body: JSON.stringify({
-      categorie: f.get("categorie"), libelle: f.get("libelle"),
-      montant: Number(f.get("montant")), date_depense: f.get("date_depense"),
-    })});
-    e.target.reset();
-    await refreshAll();
+    try {
+      await apiFetch("/depenses", { method: "POST", body: JSON.stringify({
+        categorie: f.get("categorie"), libelle: f.get("libelle"),
+        montant: Number(f.get("montant")), date_depense: f.get("date_depense"),
+      })});
+      e.target.reset();
+      await refreshAll();
+    } catch (err) {
+      alert(err.message);
+    }
   });
 }
 
@@ -903,11 +971,15 @@ if (observationForm) {
     e.preventDefault();
     const f = new FormData(e.target);
     const maisonId = f.get("maison_id");
-    await apiFetch("/observations", { method: "POST", body: JSON.stringify({
-      maison_id: maisonId ? Number(maisonId) : null, message: f.get("message"),
-    })});
-    e.target.reset();
-    await refreshAll();
+    try {
+      await apiFetch("/observations", { method: "POST", body: JSON.stringify({
+        maison_id: maisonId ? Number(maisonId) : null, message: f.get("message"),
+      })});
+      e.target.reset();
+      await refreshAll();
+    } catch (err) {
+      alert(err.message);
+    }
   });
 }
 
@@ -955,8 +1027,12 @@ async function repondreObservation(id) {
   const textarea = document.getElementById(`obs-reply-${id}`);
   const reponse = textarea ? textarea.value.trim() : "";
   if (!reponse) return;
-  await apiFetch(`/observations/${id}/repondre`, { method: "PUT", body: JSON.stringify({ reponse }) });
-  await refreshAll();
+  try {
+    await apiFetch(`/observations/${id}/repondre`, { method: "PUT", body: JSON.stringify({ reponse }) });
+    await refreshAll();
+  } catch (err) {
+    alert(err.message);
+  }
 }
 
 // ---------- Bilan mensuel ----------
@@ -1021,8 +1097,12 @@ function fillSelectors() {
 // ---------- Suppression générique ----------
 async function deleteItem(resource, id) {
   if (!confirm("Confirmer la suppression ?")) return;
-  await apiFetch(`/${resource}/${id}`, { method: "DELETE" });
-  await refreshAll();
+  try {
+    await apiFetch(`/${resource}/${id}`, { method: "DELETE" });
+    await refreshAll();
+  } catch (err) {
+    alert(err.message);
+  }
 }
 
 // ---------- Démarrage ----------

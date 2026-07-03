@@ -27,6 +27,7 @@ from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 from sqlalchemy import Boolean, Column, Date as SADate, DateTime, Float, ForeignKey, Integer, String, create_engine
 from sqlalchemy.orm import Session, declarative_base, relationship, sessionmaker
+from sqlalchemy.exc import IntegrityError
 
 try:
     import qrcode
@@ -471,7 +472,7 @@ def delete_user(user_id: int, db: Session = Depends(get_db), current: User = Dep
     user = db.query(User).get(user_id)
     if not user:
         raise HTTPException(404, "Utilisateur introuvable")
-    db.query(Maison).filter(Maison.proprietaire_id == user_id).update({"proprietaire_id": None})
+    db.query(Maison).filter(Maison.proprietaire_id == user_id).update({"proprietaire_id": None, "proprietaire": None})
     db.delete(user)
     db.commit()
     return {"ok": True}
@@ -522,8 +523,12 @@ def delete_maison(maison_id: int, db: Session = Depends(get_db), _: User = Depen
     maison = db.query(Maison).get(maison_id)
     if not maison:
         raise HTTPException(404, "Maison introuvable")
-    db.delete(maison)
-    db.commit()
+    try:
+        db.delete(maison)
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "Impossible de supprimer cette maison : elle a encore des baux ou des tickets liés. Supprimez-les (ou résiliez les baux) avant de continuer.")
     return {"ok": True}
 
 
@@ -563,8 +568,12 @@ def delete_locataire(locataire_id: int, db: Session = Depends(get_db), _: User =
     locataire = db.query(Locataire).get(locataire_id)
     if not locataire:
         raise HTTPException(404, "Locataire introuvable")
-    db.delete(locataire)
-    db.commit()
+    try:
+        db.delete(locataire)
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "Impossible de supprimer ce locataire : il a encore des baux liés. Supprimez-les d'abord.")
     return {"ok": True}
 
 
@@ -580,6 +589,10 @@ def list_baux(db: Session = Depends(get_db), current_user: User = Depends(get_cu
 
 @app.post("/api/baux", response_model=BailOut)
 def create_bail(data: BailIn, db: Session = Depends(get_db), _: User = Depends(require_gerant)):
+    if data.statut == "actif":
+        bail_existant = db.query(Bail).filter(Bail.maison_id == data.maison_id, Bail.statut == "actif").first()
+        if bail_existant:
+            raise HTTPException(409, "Cette maison a déjà un bail actif. Résiliez-le avant d'en créer un nouveau.")
     bail = Bail(**data.model_dump())
     db.add(bail)
     maison = db.query(Maison).get(data.maison_id)
@@ -611,8 +624,12 @@ def delete_bail(bail_id: int, db: Session = Depends(get_db), _: User = Depends(r
     bail = db.query(Bail).get(bail_id)
     if not bail:
         raise HTTPException(404, "Bail introuvable")
-    db.delete(bail)
-    db.commit()
+    try:
+        db.delete(bail)
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "Impossible de supprimer ce bail : des paiements y sont rattachés. Supprimez-les d'abord (ou conservez le bail pour l'historique).")
     return {"ok": True}
 
 
