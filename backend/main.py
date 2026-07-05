@@ -263,10 +263,11 @@ class Token(BaseModel):
 
 
 class UserIn(BaseModel):
-    nom: str
+    nom: Optional[str] = None
     email: str
     password: str
     role: str = "proprietaire"
+    locataire_id: Optional[int] = None
 
 
 class UserOut(BaseModel):
@@ -757,15 +758,31 @@ def create_user(data: UserIn, db: Session = Depends(get_db), _: User = Depends(r
     email = normalize_email(data.email)
     if db.query(User).filter(func.lower(User.email) == email).first():
         raise HTTPException(400, "Cet email est déjà utilisé")
-    if data.role not in ("gerant", "proprietaire"):
+    if data.role not in ("gerant", "proprietaire", "locataire"):
         raise HTTPException(400, "Rôle invalide")
     if len(data.password) < 4:
         raise HTTPException(400, "Le mot de passe doit contenir au moins 4 caractères.")
+
+    if data.role == "locataire":
+        if not data.locataire_id:
+            raise HTTPException(400, "Veuillez sélectionner le locataire associé à ce compte.")
+        locataire = db.query(Locataire).get(data.locataire_id)
+        if not locataire:
+            raise HTTPException(404, "Locataire introuvable")
+        if db.query(User).filter(User.locataire_id == data.locataire_id).first():
+            raise HTTPException(400, "Ce locataire a déjà un compte de connexion. Utilisez le bouton « Créer un accès » sur sa fiche pour réinitialiser son mot de passe.")
+        nom = locataire.nom
+    else:
+        if not data.nom:
+            raise HTTPException(400, "Le nom est requis.")
+        nom = data.nom
+
     user = User(
-        nom=data.nom,
+        nom=nom,
         email=email,
         mot_de_passe_hash=pwd_context.hash(data.password),
         role=data.role,
+        locataire_id=data.locataire_id if data.role == "locataire" else None,
     )
     db.add(user)
     db.commit()

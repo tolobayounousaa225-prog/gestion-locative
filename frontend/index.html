@@ -169,7 +169,7 @@
   .badge.occupee, .badge.actif, .badge.paye, .badge.resolu, .badge.gerant { background: #dcfce7; color: var(--ok); }
   .badge.libre, .badge.en_attente, .badge.ouvert, .badge.proprietaire { background: #fef3c7; color: var(--warn); }
   .badge.travaux, .badge.resilie, .badge.en_retard { background: #fee2e2; color: var(--danger); }
-  .badge.en_cours, .badge.partiel { background: #dbeafe; color: var(--primary); }
+  .badge.en_cours, .badge.partiel, .badge.locataire { background: #dbeafe; color: var(--primary); }
 
   .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   .actions-row { display: flex; gap: 6px; }
@@ -614,14 +614,22 @@
     <section class="view" id="view-utilisateurs">
       <div class="page-title"><div class="bar"></div><h2>Utilisateurs</h2></div>
       <div class="panel">
-        <div class="panel-header"><strong>Créer un compte propriétaire</strong></div>
+        <div class="panel-header"><strong>Créer un compte</strong></div>
         <form id="form-user" class="form-grid">
-          <div><label>Nom</label><input name="nom" required></div>
+          <div><label>Rôle</label>
+            <select name="role" id="user-role-select">
+              <option value="proprietaire">Propriétaire</option>
+              <option value="gerant">Gérant</option>
+              <option value="locataire">Locataire</option>
+            </select>
+          </div>
+          <div id="user-nom-field"><label>Nom</label><input name="nom" required></div>
+          <div id="user-locataire-field" class="hidden">
+            <label>Locataire associé</label>
+            <select name="locataire_id" id="user-locataire-select"><option value="">— Sélectionnez un locataire —</option></select>
+          </div>
           <div><label>Email</label><input name="email" type="email" required></div>
           <div><label>Mot de passe</label><input name="password" type="password" required></div>
-          <div><label>Rôle</label>
-            <select name="role"><option value="proprietaire">Propriétaire</option><option value="gerant">Gérant</option></select>
-          </div>
           <div style="align-self:end"><button type="submit">Créer le compte</button></div>
         </form>
       </div>
@@ -1238,16 +1246,30 @@ async function avancerTicket(id, nouveauStatut) {
 }
 
 // ---------- Utilisateurs ----------
+const userRoleSelect = document.getElementById("user-role-select");
+if (userRoleSelect) {
+  userRoleSelect.addEventListener("change", () => {
+    const estLocataire = userRoleSelect.value === "locataire";
+    document.getElementById("user-nom-field").classList.toggle("hidden", estLocataire);
+    document.getElementById("user-locataire-field").classList.toggle("hidden", !estLocataire);
+    document.querySelector('#form-user input[name="nom"]').required = !estLocataire;
+    document.getElementById("user-locataire-select").required = estLocataire;
+  });
+}
+
 const userForm = document.getElementById("form-user");
 if (userForm) {
   userForm.addEventListener("submit", async (e) => {
     e.preventDefault();
     const f = new FormData(e.target);
+    const role = f.get("role");
     try {
       await apiFetch("/users", { method: "POST", body: JSON.stringify({
-        nom: f.get("nom"), email: f.get("email"), password: f.get("password"), role: f.get("role"),
+        nom: f.get("nom") || null, email: f.get("email"), password: f.get("password"), role,
+        locataire_id: role === "locataire" ? Number(f.get("locataire_id")) : null,
       })});
       e.target.reset();
+      userRoleSelect.dispatchEvent(new Event("change"));
       await refreshAll();
     } catch (err) {
       toast(err.message, "error");
@@ -1539,10 +1561,10 @@ function renderMonEspace() {
 
 // ---------- Selecteurs ----------
 function fillSelectors() {
-  const maisonOptions = CACHE.maisons.map(m => `<option value="${m.id}">${m.adresse}</option>`).join("");
-  const locataireOptions = CACHE.locataires.filter(l => !l.archive).map(l => `<option value="${l.id}">${l.nom}</option>`).join("");
+  const maisonOptions = CACHE.maisons.map(m => `<option value="${m.id}">${escapeHtml(m.adresse)}</option>`).join("");
+  const locataireOptions = CACHE.locataires.filter(l => !l.archive).map(l => `<option value="${l.id}">${escapeHtml(l.nom)}</option>`).join("");
   const bailOptions = CACHE.baux.filter(b => b.statut === "actif").map(b => `<option value="${b.id}">#${b.id} — ${maisonAdresse(b.maison_id)} / ${locataireNom(b.locataire_id)}</option>`).join("");
-  const proprietaireOptions = CACHE.users.filter(u => u.role === "proprietaire").map(u => `<option value="${u.id}">${u.nom}</option>`).join("");
+  const proprietaireOptions = CACHE.users.filter(u => u.role === "proprietaire").map(u => `<option value="${u.id}">${escapeHtml(u.nom)}</option>`).join("");
 
   const bailMaison = document.getElementById("bail-maison-select");
   const bailLocataire = document.getElementById("bail-locataire-select");
@@ -1570,6 +1592,14 @@ function fillSelectors() {
     const val = historiqueMaisonFiltre.value;
     historiqueMaisonFiltre.innerHTML = `<option value="">Toutes les maisons</option>` + maisonOptions;
     historiqueMaisonFiltre.value = val;
+  }
+
+  const userLocataireSelect = document.getElementById("user-locataire-select");
+  if (userLocataireSelect) {
+    const locatairesAvecCompte = new Set(CACHE.users.filter(u => u.role === "locataire").map(u => u.locataire_id));
+    const options = CACHE.locataires.filter(l => !l.archive && !locatairesAvecCompte.has(l.id))
+      .map(l => `<option value="${l.id}">${escapeHtml(l.nom)}</option>`).join("");
+    userLocataireSelect.innerHTML = `<option value="">— Sélectionnez un locataire —</option>` + options;
   }
 }
 
