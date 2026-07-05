@@ -268,22 +268,29 @@
     </div>
   </header>
   <nav id="main-nav">
-    <button data-view="dashboard" class="active">📊 Tableau de bord</button>
-    <button data-view="maisons">🏠 Maisons</button>
-    <button data-view="locataires">👥 Locataires</button>
-    <button data-view="baux">📃 Baux</button>
-    <button data-view="paiements">💰 Paiements</button>
-    <button data-view="rappels" id="nav-rappels" class="hidden">🔔 Rappels</button>
-    <button data-view="tickets">🔧 Maintenance</button>
-    <button data-view="depenses" id="nav-depenses" class="hidden">💸 Dépenses</button>
+    <button data-view="mon-espace" id="nav-mon-espace" class="hidden">🏡 Mon espace</button>
+    <button data-view="dashboard" class="active not-locataire">📊 Tableau de bord</button>
+    <button data-view="maisons" class="not-locataire">🏠 Maisons</button>
+    <button data-view="locataires" class="not-locataire">👥 Locataires</button>
+    <button data-view="baux" class="not-locataire">📃 Baux</button>
+    <button data-view="paiements" class="not-locataire">💰 Paiements</button>
+    <button data-view="rappels" id="nav-rappels" class="hidden not-locataire">🔔 Rappels</button>
+    <button data-view="tickets" class="not-locataire">🔧 Maintenance</button>
+    <button data-view="depenses" id="nav-depenses" class="hidden not-locataire">💸 Dépenses</button>
     <button data-view="observations">✉️ Observations<span id="obs-badge" class="nav-badge hidden">0</span></button>
-    <button data-view="bilan" id="nav-bilan" class="hidden">📈 Bilan</button>
-    <button data-view="historique">🗂️ Historique</button>
-    <button data-view="utilisateurs" id="nav-utilisateurs" class="hidden">🔑 Utilisateurs</button>
-    <button data-view="audit" id="nav-audit" class="hidden">🛡️ Journal de connexion</button>
+    <button data-view="bilan" id="nav-bilan" class="hidden not-locataire">📈 Bilan</button>
+    <button data-view="historique" class="not-locataire">🗂️ Historique</button>
+    <button data-view="utilisateurs" id="nav-utilisateurs" class="hidden not-locataire">🔑 Utilisateurs</button>
+    <button data-view="audit" id="nav-audit" class="hidden not-locataire">🛡️ Journal de connexion</button>
   </nav>
 
   <main>
+    <!-- MON ESPACE (locataire) -->
+    <section class="view" id="view-mon-espace">
+      <div class="page-title"><div class="bar"></div><h2>Mon espace</h2></div>
+      <div id="mon-espace-content"></div>
+    </section>
+
     <!-- DASHBOARD -->
     <section class="view active" id="view-dashboard">
       <div class="page-title"><div class="bar"></div><h2>Tableau de bord</h2></div>
@@ -717,7 +724,8 @@ async function showApp() {
 
   document.getElementById("user-nom").textContent = ME.nom;
   const roleTag = document.getElementById("user-role");
-  roleTag.textContent = ME.role === "gerant" ? "Gérant" : "Propriétaire";
+  const roleLabels = { gerant: "Gérant", proprietaire: "Propriétaire", locataire: "Locataire" };
+  roleTag.textContent = roleLabels[ME.role] || ME.role;
   roleTag.className = "role-tag badge " + ME.role;
 
   const profilNom = document.getElementById("profil-nom");
@@ -726,14 +734,17 @@ async function showApp() {
   if (profilEmail) profilEmail.value = ME.email;
 
   const isGerant = ME.role === "gerant";
+  const isLocataire = ME.role === "locataire";
   document.querySelectorAll(".gerant-only").forEach(el => el.classList.toggle("hidden", !isGerant));
   document.querySelectorAll(".proprietaire-only").forEach(el => el.classList.toggle("hidden", isGerant));
+  document.querySelectorAll(".not-locataire").forEach(el => el.classList.toggle("hidden", isLocataire));
+  document.getElementById("nav-mon-espace").classList.toggle("hidden", !isLocataire);
   document.getElementById("nav-utilisateurs").classList.toggle("hidden", !isGerant);
   document.getElementById("nav-depenses").classList.toggle("hidden", !isGerant);
   document.getElementById("nav-bilan").classList.toggle("hidden", !isGerant);
   document.getElementById("nav-rappels").classList.toggle("hidden", !isGerant);
   document.getElementById("nav-audit").classList.toggle("hidden", !isGerant);
-  document.getElementById("observations-title").textContent = isGerant ? "Boîte à messages" : "Mes observations";
+  document.getElementById("observations-title").textContent = isGerant ? "Boîte à messages" : (isLocataire ? "Écrire au gérant" : "Mes observations");
 
   const bilanInput = document.getElementById("bilan-mois-input");
   if (bilanInput && !bilanInput.value) {
@@ -741,8 +752,8 @@ async function showApp() {
     bilanInput.value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
   }
 
+  showView(isLocataire ? "mon-espace" : "dashboard");
   await refreshAll();
-  showView("dashboard");
 }
 
 // ---------- Navigation ----------
@@ -759,6 +770,7 @@ function showView(name) {
   if (name === "historique") chargerHistorique();
   if (name === "rappels") chargerRappels();
   if (name === "audit") chargerAudit();
+  if (name === "mon-espace") renderMonEspace();
 }
 
 // ---------- Data loading ----------
@@ -772,6 +784,7 @@ async function refreshAll() {
   const [maisons, locataires, baux, paiements, tickets, observations, users, depenses] = await Promise.all(calls);
   CACHE = { maisons, locataires, baux, paiements, tickets, users: users || [], depenses: depenses || [], observations: observations || [] };
   if (document.getElementById("view-dashboard").classList.contains("active")) renderDashboard();
+  if (document.getElementById("view-mon-espace").classList.contains("active")) renderMonEspace();
   renderMaisons();
   renderLocataires();
   renderBaux();
@@ -941,6 +954,7 @@ function renderLocataires() {
       <td class="actions-row gerant-only no-print ${ME && ME.role !== 'gerant' ? 'hidden' : ''}">
         <button class="secondary" onclick='editLocataire(${JSON.stringify(l).replace(/'/g, "&apos;")})'>Modifier</button>
         <button class="secondary" onclick="genererPortailLocataire(${l.id})">Portail</button>
+        <button class="secondary" onclick='creerAccesLocataire(${l.id}, ${JSON.stringify(l.nom).replace(/'/g, "&apos;")}, ${JSON.stringify(l.email || "").replace(/'/g, "&apos;")})'>🔑 Créer un accès</button>
         <button class="danger" onclick="deleteItem('locataires', ${l.id})">Suppr.</button>
       </td>
     </tr>`).join("") || `<tr><td colspan="6" class="empty-note">Aucun locataire</td></tr>`;
@@ -951,6 +965,19 @@ async function genererPortailLocataire(id) {
     const data = await apiFetch(`/locataires/${id}/portail-token`, { method: "POST" });
     await navigator.clipboard.writeText(data.portail_url).catch(() => {});
     prompt("Lien du portail locataire (copié dans le presse-papiers si autorisé) :", data.portail_url);
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
+async function creerAccesLocataire(id, nom, emailActuel) {
+  const email = prompt(`Email de connexion pour ${nom} :`, emailActuel || "");
+  if (!email) return;
+  const password = prompt(`Mot de passe pour ${nom} (au moins 4 caractères) :`);
+  if (!password) return;
+  try {
+    const compte = await apiFetch(`/locataires/${id}/compte`, { method: "POST", body: JSON.stringify({ email, password }) });
+    alert(`Accès créé pour ${compte.nom} — communiquez-lui ces identifiants :\nEmail : ${compte.email}\nMot de passe : ${password}`);
   } catch (err) {
     alert(err.message);
   }
@@ -1362,6 +1389,35 @@ function telechargerBilanPdf() {
 function telechargerBilanExcel() {
   if (!BILAN_MOIS_ACTUEL) return;
   telechargerFichier(`/bilan/${BILAN_MOIS_ACTUEL}/excel`, `bilan_${BILAN_MOIS_ACTUEL}.xlsx`);
+}
+
+// ---------- Mon espace (locataire) ----------
+function renderMonEspace() {
+  const container = document.getElementById("mon-espace-content");
+  if (!container) return;
+  if (!CACHE.baux.length) {
+    container.innerHTML = `<div class="panel"><div class="empty-note">Aucun bail associé à votre compte pour le moment. Contactez votre gérant.</div></div>`;
+    return;
+  }
+  container.innerHTML = CACHE.baux.map(b => {
+    const paiementsBail = CACHE.paiements.filter(p => p.bail_id === b.id).sort((x, y) => y.mois_concerne.localeCompare(x.mois_concerne));
+    return `
+      <div class="panel">
+        <div class="panel-header"><strong>${maisonAdresse(b.maison_id)}</strong> ${badge(b.statut)}</div>
+        <div style="font-size:13px; color:var(--muted); margin-bottom:12px;">
+          Du ${b.date_debut} ${b.date_fin ? "au " + b.date_fin : "(en cours)"} · Loyer mensuel : ${b.loyer_mensuel} · Caution : ${b.caution}
+        </div>
+        <table><thead><tr><th>Mois</th><th>Montant</th><th>Statut</th><th>Date de paiement</th><th></th></tr></thead>
+          <tbody>
+            ${paiementsBail.map(p => `
+              <tr>
+                <td>${p.mois_concerne}</td><td>${p.montant}</td><td>${badge(p.statut)}</td><td>${p.date_paiement || "—"}</td>
+                <td class="actions-row">${p.statut === "paye" ? `<button class="secondary" onclick="telechargerQuittance(${p.id})">📄 Reçu PDF</button>` : ""}</td>
+              </tr>`).join("") || `<tr><td colspan="5" class="empty-note">Aucun paiement enregistré</td></tr>`}
+          </tbody>
+        </table>
+      </div>`;
+  }).join("");
 }
 
 // ---------- Selecteurs ----------
