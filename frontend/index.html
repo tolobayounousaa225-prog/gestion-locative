@@ -195,6 +195,8 @@
     #view-bilan { position: absolute; left: 0; top: 0; width: 100%; padding: 10px; }
     body.print-locataires #view-locataires, body.print-locataires #view-locataires * { visibility: visible; }
     body.print-locataires #view-locataires { display: block !important; position: absolute; left: 0; top: 0; width: 100%; padding: 10px; }
+    body.print-depenses #view-depenses, body.print-depenses #view-depenses * { visibility: visible; }
+    body.print-depenses #view-depenses { display: block !important; position: absolute; left: 0; top: 0; width: 100%; padding: 10px; }
     .no-print { display: none !important; }
   }
 </style>
@@ -467,7 +469,7 @@
     <!-- DEPENSES -->
     <section class="view" id="view-depenses">
       <div class="page-title"><div class="bar"></div><h2>Dépenses</h2></div>
-      <div class="panel gerant-only">
+      <div class="panel gerant-only no-print">
         <div class="panel-header"><strong>Nouvelle dépense</strong></div>
         <form id="form-depense" class="form-grid">
           <div>
@@ -487,8 +489,14 @@
         </form>
       </div>
       <div class="panel">
-        <div class="panel-header"><strong>Historique des dépenses</strong></div>
-        <table><thead><tr><th>Date</th><th>Catégorie</th><th>Libellé</th><th>Montant</th><th></th></tr></thead>
+        <div class="panel-header" style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+          <strong>Historique des dépenses</strong>
+          <div style="display:flex; gap:8px;">
+            <button type="button" class="secondary" onclick="imprimerDepenses()">🖨️ Imprimer</button>
+            <button type="button" class="secondary" onclick="telechargerDepensesPdf()">⬇️ Télécharger PDF</button>
+          </div>
+        </div>
+        <table><thead><tr><th>Date</th><th>Catégorie</th><th>Libellé</th><th>Montant</th><th class="no-print"></th></tr></thead>
           <tbody id="depenses-list"></tbody>
         </table>
       </div>
@@ -1248,8 +1256,22 @@ function renderDepenses() {
     <tr>
       <td>${d.date_depense}</td><td>${CATEGORIE_LABELS[d.categorie] || d.categorie}</td>
       <td>${d.libelle}</td><td>${d.montant}</td>
-      <td class="actions-row"><button class="danger" onclick="deleteItem('depenses', ${d.id})">Suppr.</button></td>
+      <td class="actions-row no-print"><button class="danger" onclick="deleteItem('depenses', ${d.id})">Suppr.</button></td>
     </tr>`).join("") || `<tr><td colspan="5" class="empty-note">Aucune dépense enregistrée</td></tr>`;
+}
+
+function imprimerDepenses() {
+  document.body.classList.add("print-depenses");
+  const cleanup = () => {
+    document.body.classList.remove("print-depenses");
+    window.removeEventListener("afterprint", cleanup);
+  };
+  window.addEventListener("afterprint", cleanup);
+  window.print();
+}
+
+function telechargerDepensesPdf() {
+  telechargerFichier("/depenses/export/pdf", "historique_depenses.pdf");
 }
 
 // ---------- Observations ----------
