@@ -100,9 +100,10 @@ class User(Base):
     nom = Column(String, nullable=False)
     email = Column(String, unique=True, nullable=False, index=True)
     mot_de_passe_hash = Column(String, nullable=False)
-    role = Column(String, default="proprietaire")  # gerant / proprietaire
+    role = Column(String, default="proprietaire")  # gerant / proprietaire / locataire
     reset_token = Column(String, nullable=True)
     reset_token_expiry = Column(DateTime, nullable=True)
+    locataire_id = Column(Integer, ForeignKey("locataires.id"), nullable=True)  # compte locataire (role="locataire")
 
     maisons = relationship("Maison", back_populates="proprietaire_user")
 
@@ -248,6 +249,7 @@ try:
     _add_column_if_missing("locataires", "portail_token", "VARCHAR")
     _add_column_if_missing("users", "reset_token", "VARCHAR")
     _add_column_if_missing("users", "reset_token_expiry", "TIMESTAMP")
+    _add_column_if_missing("users", "locataire_id", "INTEGER")
 except Exception:
     pass
 
@@ -273,6 +275,12 @@ class UserOut(BaseModel):
     nom: str
     email: str
     role: str
+    locataire_id: Optional[int] = None
+
+
+class LocataireCompteIn(BaseModel):
+    email: str
+    password: str
 
 
 class UpdateMeIn(BaseModel):
@@ -456,6 +464,18 @@ def require_gerant(current_user: User = Depends(get_current_user)) -> User:
 
 def owned_maison_ids(db: Session, user: User) -> List[int]:
     return [m.id for m in db.query(Maison.id).filter(Maison.proprietaire_id == user.id).all()]
+
+
+def locataire_bail_ids(db: Session, user: User) -> List[int]:
+    if not user.locataire_id:
+        return []
+    return [b.id for b in db.query(Bail.id).filter(Bail.locataire_id == user.locataire_id).all()]
+
+
+def locataire_maison_ids(db: Session, user: User) -> List[int]:
+    if not user.locataire_id:
+        return []
+    return [b.maison_id for b in db.query(Bail.maison_id).filter(Bail.locataire_id == user.locataire_id).all()]
 
 
 def generate_verification_code() -> str:
@@ -750,6 +770,8 @@ def list_maisons(db: Session = Depends(get_db), current_user: User = Depends(get
     q = db.query(Maison)
     if current_user.role == "proprietaire":
         q = q.filter(Maison.proprietaire_id == current_user.id)
+    elif current_user.role == "locataire":
+        q = q.filter(Maison.id.in_(locataire_maison_ids(db, current_user)))
     return q.all()
 
 
@@ -805,6 +827,8 @@ def list_locataires(db: Session = Depends(get_db), current_user: User = Depends(
         maison_ids = owned_maison_ids(db, current_user)
         locataire_ids = {b.locataire_id for b in db.query(Bail).filter(Bail.maison_id.in_(maison_ids)).all()}
         return db.query(Locataire).filter(Locataire.id.in_(locataire_ids)).all()
+    if current_user.role == "locataire":
+        return db.query(Locataire).filter(Locataire.id == current_user.locataire_id).all()
     return db.query(Locataire).all()
 
 
@@ -888,6 +912,38 @@ def generer_portail_token(locataire_id: int, request: Request, db: Session = Dep
     return {"portail_url": f"{base_url}/portail.html?token={locataire.portail_token}"}
 
 
+# ---------- Accès locataire (compte de connexion créé par le gérant) ----------
+@app.post("/api/locataires/{locataire_id}/compte", response_model=UserOut)
+def creer_acces_locataire(locataire_id: int, data: LocataireCompteIn, db: Session = Depends(get_db), _: User = Depends(require_gerant)):
+    locataire = db.query(Locataire).get(locataire_id)
+    if not locataire:
+        raise HTTPException(404, "Locataire introuvable")
+    if len(data.password) < 4:
+        raise HTTPException(400, "Le mot de passe doit contenir au moins 4 caractères.")
+
+    compte = db.query(User).filter(User.locataire_id == locataire_id).first()
+    email_deja_pris = db.query(User).filter(User.email == data.email, User.id != (compte.id if compte else -1)).first()
+    if email_deja_pris:
+        raise HTTPException(400, "Cet email est déjà utilisé par un autre compte.")
+
+    if compte:
+        compte.email = data.email
+        compte.mot_de_passe_hash = pwd_context.hash(data.password)
+        compte.nom = locataire.nom
+    else:
+        compte = User(
+            nom=locataire.nom,
+            email=data.email,
+            mot_de_passe_hash=pwd_context.hash(data.password),
+            role="locataire",
+            locataire_id=locataire_id,
+        )
+        db.add(compte)
+    db.commit()
+    db.refresh(compte)
+    return compte
+
+
 @app.get("/api/portail/{token}")
 def portail_locataire(token: str, db: Session = Depends(get_db)):
     locataire = db.query(Locataire).filter(Locataire.portail_token == token).first()
@@ -925,6 +981,8 @@ def historique_locataires(maison_id: Optional[int] = None, db: Session = Depends
     if current_user.role == "proprietaire":
         maison_ids = owned_maison_ids(db, current_user)
         q = q.filter(Bail.maison_id.in_(maison_ids))
+    elif current_user.role == "locataire":
+        q = q.filter(Bail.maison_id.in_(locataire_maison_ids(db, current_user)))
     if maison_id:
         q = q.filter(Bail.maison_id == maison_id)
     resultats = []
@@ -952,6 +1010,8 @@ def list_baux(db: Session = Depends(get_db), current_user: User = Depends(get_cu
     if current_user.role == "proprietaire":
         maison_ids = owned_maison_ids(db, current_user)
         q = q.filter(Bail.maison_id.in_(maison_ids))
+    elif current_user.role == "locataire":
+        q = q.filter(Bail.locataire_id == current_user.locataire_id)
     return q.all()
 
 
@@ -1009,6 +1069,8 @@ def list_paiements(db: Session = Depends(get_db), current_user: User = Depends(g
         maison_ids = owned_maison_ids(db, current_user)
         bail_ids = [b.id for b in db.query(Bail.id).filter(Bail.maison_id.in_(maison_ids)).all()]
         q = q.join(Bail).filter(Paiement.bail_id.in_(bail_ids))
+    elif current_user.role == "locataire":
+        q = q.filter(Paiement.bail_id.in_(locataire_bail_ids(db, current_user)))
     return q.all()
 
 
@@ -1384,6 +1446,9 @@ def quittance_pdf(paiement_id: int, request: Request, db: Session = Depends(get_
     if current_user.role == "proprietaire":
         if not maison or maison.proprietaire_id != current_user.id:
             raise HTTPException(403, "Accès refusé à ce document")
+    elif current_user.role == "locataire":
+        if not bail or bail.locataire_id != current_user.locataire_id:
+            raise HTTPException(403, "Accès refusé à ce document")
 
     if not paiement.verification_code:
         paiement.verification_code = generate_verification_code()
@@ -1436,6 +1501,8 @@ def list_tickets(db: Session = Depends(get_db), current_user: User = Depends(get
     if current_user.role == "proprietaire":
         maison_ids = owned_maison_ids(db, current_user)
         q = q.filter(Ticket.maison_id.in_(maison_ids))
+    elif current_user.role == "locataire":
+        q = q.filter(Ticket.maison_id.in_(locataire_maison_ids(db, current_user)))
     return q.all()
 
 
@@ -1513,19 +1580,23 @@ def delete_depense(depense_id: int, db: Session = Depends(get_db), _: User = Dep
 @app.get("/api/observations", response_model=List[ObservationOut])
 def list_observations(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     q = db.query(Observation)
-    if current_user.role == "proprietaire":
+    if current_user.role in ("proprietaire", "locataire"):
         q = q.filter(Observation.proprietaire_id == current_user.id)
     return q.order_by(Observation.date_creation.desc()).all()
 
 
 @app.post("/api/observations", response_model=ObservationOut)
 def create_observation(data: ObservationIn, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    if current_user.role != "proprietaire":
-        raise HTTPException(403, "Réservé aux propriétaires")
+    if current_user.role not in ("proprietaire", "locataire"):
+        raise HTTPException(403, "Réservé aux propriétaires et locataires")
     if data.maison_id:
         maison = db.query(Maison).get(data.maison_id)
-        if not maison or maison.proprietaire_id != current_user.id:
+        if not maison:
+            raise HTTPException(403, "Ce bien n'existe pas")
+        if current_user.role == "proprietaire" and maison.proprietaire_id != current_user.id:
             raise HTTPException(403, "Ce bien ne vous appartient pas")
+        if current_user.role == "locataire" and maison.id not in locataire_maison_ids(db, current_user):
+            raise HTTPException(403, "Ce bien ne vous concerne pas")
     observation = Observation(proprietaire_id=current_user.id, maison_id=data.maison_id, message=data.message)
     db.add(observation)
     db.commit()
@@ -1570,6 +1641,8 @@ def delete_observation(observation_id: int, db: Session = Depends(get_db), _: Us
 # ---------- Tableau de bord ----------
 @app.get("/api/dashboard")
 def dashboard(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    if current_user.role == "locataire":
+        raise HTTPException(403, "Non disponible pour ce rôle.")
     mois_courant = date.today().strftime("%Y-%m")
     is_owner = current_user.role == "proprietaire"
     maison_ids = owned_maison_ids(db, current_user) if is_owner else None
@@ -1633,6 +1706,8 @@ def _mois_range(n: int) -> List[str]:
 
 @app.get("/api/dashboard/evolution")
 def dashboard_evolution(mois: int = 6, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    if current_user.role == "locataire":
+        raise HTTPException(403, "Non disponible pour ce rôle.")
     is_owner = current_user.role == "proprietaire"
     maison_ids = owned_maison_ids(db, current_user) if is_owner else None
 

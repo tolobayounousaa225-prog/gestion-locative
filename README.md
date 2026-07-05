@@ -38,6 +38,7 @@ Pour changer ces identifiants, définir les variables d'environnement `ADMIN_EMA
 - Chaque utilisateur peut modifier son nom, son email ou son mot de passe depuis la section Utilisateurs (« Mon profil »).
 - Export PDF de la liste des locataires + impression directe.
 - **Portail locataire en lecture seule** : générez un lien personnel par locataire (bouton « Portail » dans la section Locataires) donnant accès à son bail et son historique de paiements, sans compte ni mot de passe.
+- **Compte de connexion locataire** : bouton « Créer un accès » sur la fiche locataire — le gérant définit un email et un mot de passe, que le locataire peut ensuite utiliser pour se connecter (comme un gérant/propriétaire) et voir dans « Mon espace » : son bail/contrat, l'historique de ses paiements, ses reçus (quittances PDF), et envoyer un message au gérant (onglet Observations). Le locataire ne voit que ses propres données.
 - **Rappels d'impayés** (section « Rappels ») : liste des baux impayés du mois avec lien WhatsApp pré-rempli pour un rappel manuel en un clic, et envoi automatique par email si le locataire a une adresse email et que le SMTP est configuré (voir ci-dessous). Un job quotidien envoie aussi ces rappels automatiquement.
 - **Échéancier mensuel automatique** : bouton « Générer l'échéancier du mois » dans Paiements (crée un paiement « en attente » par bail actif), également généré automatiquement le 1er de chaque mois.
 - **Bilan mensuel** exportable en PDF et en Excel, en plus de l'affichage à l'écran.
