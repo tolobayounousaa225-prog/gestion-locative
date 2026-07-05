@@ -28,6 +28,22 @@
   }
   a { color: inherit; }
 
+  /* ---------- TOASTS ---------- */
+  #toast-container {
+    position: fixed; top: 128px; right: 18px; z-index: 9999;
+    display: flex; flex-direction: column; gap: 10px; max-width: 360px;
+  }
+  .toast {
+    background: var(--navy); color: #fff; padding: 12px 16px; border-radius: 10px;
+    font-size: 13.5px; line-height: 1.4; box-shadow: 0 10px 30px rgba(0,0,0,.25);
+    opacity: 0; transform: translateX(30px); transition: opacity .25s ease, transform .25s ease;
+    border-left: 4px solid var(--gold);
+  }
+  .toast.show { opacity: 1; transform: translateX(0); }
+  .toast.toast-success { border-left-color: var(--ok); }
+  .toast.toast-error { border-left-color: var(--danger); }
+  .toast.toast-info { border-left-color: var(--gold); }
+
   /* ---------- LOGIN ---------- */
   #login-screen {
     display: flex; align-items: center; justify-content: center; min-height: 100vh;
@@ -128,6 +144,20 @@
   .card .value { font-size: 26px; font-weight: 800; color: var(--navy); }
   .card .label { font-size: 12px; color: var(--muted); margin-top: 4px; }
 
+  .card.kpi { display: flex; align-items: center; gap: 14px; }
+  .kpi-icon {
+    width: 44px; height: 44px; border-radius: 12px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center; font-size: 20px;
+  }
+  .kpi-navy { border-top-color: var(--navy); } .kpi-navy .kpi-icon { background: rgba(18,49,79,.10); }
+  .kpi-gold { border-top-color: var(--gold); } .kpi-gold .kpi-icon { background: rgba(201,162,39,.15); }
+  .kpi-green { border-top-color: var(--ok); } .kpi-green .kpi-icon { background: rgba(22,163,74,.12); }
+  .kpi-red { border-top-color: var(--danger); } .kpi-red .kpi-icon { background: rgba(220,38,38,.12); }
+  .kpi-blue { border-top-color: #3b82f6; } .kpi-blue .kpi-icon { background: rgba(59,130,246,.12); }
+  .kpi-trend { font-size: 11px; font-weight: 700; margin-top: 3px; }
+  .kpi-trend.up { color: var(--ok); }
+  .kpi-trend.down { color: var(--danger); }
+
   .panel { background: var(--card); border-radius: 12px; padding: 20px; box-shadow: 0 1px 4px rgba(18,49,79,.08); margin-bottom: 20px; }
   .panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
   .panel-header strong { color: var(--navy); font-size: 14.5px; }
@@ -159,13 +189,11 @@
     background: var(--danger); color: #fff; font-size: 10px; font-weight: 800; line-height: 16px; text-align: center;
   }
 
-  /* ---------- Évolution (graphique en barres) ---------- */
-  .evolution-chart { display: flex; align-items: flex-end; gap: 14px; height: 160px; padding: 10px 4px 0; }
-  .evolution-bar-wrap { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; }
-  .evolution-bar { width: 60%; max-width: 42px; background: linear-gradient(180deg, var(--gold), #a8811c); border-radius: 6px 6px 0 0; transition: height .3s ease; position: relative; }
-  .evolution-bar.low { background: linear-gradient(180deg, #f2b6b6, var(--danger)); }
-  .evolution-bar-pct { font-size: 11px; font-weight: 700; color: var(--navy); margin-bottom: 4px; }
-  .evolution-bar-label { font-size: 10.5px; color: var(--muted); margin-top: 6px; }
+  /* ---------- Évolution (graphique SVG) ---------- */
+  .evolution-chart { padding: 6px 4px 0; }
+  .evolution-legend { display: flex; gap: 18px; font-size: 12px; color: var(--muted); margin-top: 8px; }
+  .evolution-legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .evolution-legend .swatch { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
 
   /* ---------- Observations / messages ---------- */
   .obs-item { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; }
@@ -202,6 +230,8 @@
 </style>
 </head>
 <body>
+
+<div id="toast-container"></div>
 
 <!-- ================= LOGIN ================= -->
 <div id="login-screen">
@@ -620,6 +650,21 @@ let TOKEN = localStorage.getItem("gl_token") || null;
 let ME = null;
 let CACHE = { maisons: [], locataires: [], baux: [], paiements: [], tickets: [], users: [], depenses: [], observations: [] };
 
+// ---------- Toasts ----------
+function toast(message, type = "info", duration = 4000) {
+  const container = document.getElementById("toast-container");
+  if (!container) return;
+  const el = document.createElement("div");
+  el.className = `toast toast-${type}`;
+  el.textContent = message;
+  container.appendChild(el);
+  requestAnimationFrame(() => el.classList.add("show"));
+  setTimeout(() => {
+    el.classList.remove("show");
+    setTimeout(() => el.remove(), 300);
+  }, duration);
+}
+
 // ---------- Auth ----------
 function authHeaders(extra = {}) {
   return TOKEN ? { ...extra, Authorization: `Bearer ${TOKEN}` } : extra;
@@ -812,42 +857,75 @@ function proprietaireNom(id) { return CACHE.users.find(u => u.id === id)?.nom ||
 // ---------- Dashboard ----------
 async function renderDashboard() {
   const d = await apiFetch("/dashboard");
+  const evolution = await apiFetch("/dashboard/evolution?mois=6").catch(() => []);
+
+  const moisPrec = evolution.length >= 2 ? evolution[evolution.length - 2] : null;
+  let trendHtml = "";
+  if (moisPrec && moisPrec.total_encaisse) {
+    const variation = Math.round((d.total_encaisse - moisPrec.total_encaisse) / moisPrec.total_encaisse * 100);
+    trendHtml = `<div class="kpi-trend ${variation >= 0 ? 'up' : 'down'}">${variation >= 0 ? '▲' : '▼'} ${Math.abs(variation)}% vs mois dernier</div>`;
+  }
+
   document.getElementById("dashboard-cards").innerHTML = `
-    <div class="card"><div class="value">${d.total_maisons}</div><div class="label">🏠 Maisons</div></div>
-    <div class="card"><div class="value">${d.taux_occupation}%</div><div class="label">Taux d'occupation</div></div>
-    <div class="card"><div class="value">${d.total_attendu}</div><div class="label">Loyers attendus (${d.mois})</div></div>
-    <div class="card"><div class="value">${d.total_encaisse}</div><div class="label">💰 Loyers encaissés</div></div>
-    <div class="card"><div class="value">${d.nombre_impayes}</div><div class="label">⚠️ Impayés</div></div>
-    <div class="card"><div class="value">${d.tickets_ouverts}</div><div class="label">🔧 Tickets ouverts</div></div>
+    <div class="card kpi kpi-navy"><div class="kpi-icon">🏠</div><div class="kpi-body"><div class="value">${d.total_maisons}</div><div class="label">Maisons</div></div></div>
+    <div class="card kpi kpi-blue"><div class="kpi-icon">📊</div><div class="kpi-body"><div class="value">${d.taux_occupation}%</div><div class="label">Taux d'occupation</div></div></div>
+    <div class="card kpi kpi-gold"><div class="kpi-icon">🧾</div><div class="kpi-body"><div class="value">${d.total_attendu}</div><div class="label">Loyers attendus (${d.mois})</div></div></div>
+    <div class="card kpi kpi-green"><div class="kpi-icon">💰</div><div class="kpi-body"><div class="value">${d.total_encaisse}</div><div class="label">Loyers encaissés</div>${trendHtml}</div></div>
+    <div class="card kpi kpi-red"><div class="kpi-icon">⚠️</div><div class="kpi-body"><div class="value">${d.nombre_impayes}</div><div class="label">Impayés</div></div></div>
+    <div class="card kpi kpi-navy"><div class="kpi-icon">🔧</div><div class="kpi-body"><div class="value">${d.tickets_ouverts}</div><div class="label">Tickets ouverts</div></div></div>
   `;
   document.getElementById("dashboard-impayes").innerHTML = d.impayes.map(i => `
     <tr><td>#${i.bail_id}</td><td>${maisonAdresse(i.maison_id)}</td><td>${i.loyer_mensuel}</td></tr>
   `).join("") || `<tr><td colspan="3" class="empty-note">Aucun impayé 🎉</td></tr>`;
 
-  renderEvolution();
+  renderEvolution(evolution);
 }
 
-async function renderEvolution() {
+function renderEvolution(data) {
   const el = document.getElementById("evolution-chart");
   if (!el) return;
-  try {
-    const data = await apiFetch("/dashboard/evolution?mois=6");
-    const moisLabels = { "01":"Jan","02":"Fév","03":"Mar","04":"Avr","05":"Mai","06":"Juin","07":"Juil","08":"Août","09":"Sep","10":"Oct","11":"Nov","12":"Déc" };
-    el.innerHTML = data.map(m => {
-      const [annee, mm] = m.mois.split("-");
-      const pct = Math.max(0, Math.min(100, m.taux_encaissement));
-      const hauteur = Math.max(6, pct);
-      const low = pct < 60 ? "low" : "";
-      return `
-        <div class="evolution-bar-wrap">
-          <div class="evolution-bar-pct">${m.taux_encaissement}%</div>
-          <div class="evolution-bar ${low}" style="height:${hauteur}%"></div>
-          <div class="evolution-bar-label">${moisLabels[mm] || mm} ${annee.slice(2)}</div>
-        </div>`;
-    }).join("");
-  } catch (err) {
+  if (!data || !data.length) {
     el.innerHTML = `<div class="empty-note">Évolution indisponible</div>`;
+    return;
   }
+
+  const moisLabels = { "01":"Jan","02":"Fév","03":"Mar","04":"Avr","05":"Mai","06":"Juin","07":"Juil","08":"Août","09":"Sep","10":"Oct","11":"Nov","12":"Déc" };
+  const width = 640, height = 220;
+  const padding = { top: 22, right: 10, bottom: 30, left: 10 };
+  const chartH = height - padding.top - padding.bottom;
+  const groupW = (width - padding.left - padding.right) / data.length;
+  const barW = Math.min(34, groupW * 0.3);
+  const maxVal = Math.max(1, ...data.flatMap(m => [m.total_attendu, m.total_encaisse]));
+
+  let bars = "";
+  data.forEach((m, i) => {
+    const [annee, mm] = m.mois.split("-");
+    const groupX = padding.left + i * groupW + groupW / 2;
+    const hAttendu = (m.total_attendu / maxVal) * chartH;
+    const hEncaisse = (m.total_encaisse / maxVal) * chartH;
+    const xAttendu = groupX - barW - 2;
+    const xEncaisse = groupX + 2;
+    const yAttendu = height - padding.bottom - hAttendu;
+    const yEncaisse = height - padding.bottom - hEncaisse;
+    const couleurEncaisse = m.taux_encaissement < 60 ? "#dc2626" : "#C9A227";
+    bars += `
+      <rect x="${xAttendu}" y="${yAttendu}" width="${barW}" height="${hAttendu}" rx="3" fill="#D6DCE3" />
+      <rect x="${xEncaisse}" y="${yEncaisse}" width="${barW}" height="${hEncaisse}" rx="3" fill="${couleurEncaisse}" />
+      <text x="${groupX}" y="${height - padding.bottom + 16}" text-anchor="middle" font-size="10" fill="#6B7280">${moisLabels[mm] || mm} ${annee.slice(2)}</text>
+      <text x="${xEncaisse + barW / 2}" y="${Math.max(padding.top - 4, yEncaisse - 6)}" text-anchor="middle" font-size="9.5" font-weight="700" fill="#12314F">${m.taux_encaissement}%</text>
+    `;
+  });
+
+  el.innerHTML = `
+    <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMid meet" style="width:100%; height:200px;">
+      <line x1="${padding.left}" y1="${height - padding.bottom}" x2="${width - padding.right}" y2="${height - padding.bottom}" stroke="#E2E6EB" stroke-width="1"/>
+      ${bars}
+    </svg>
+    <div class="evolution-legend">
+      <span><span class="swatch" style="background:#D6DCE3"></span>Loyers attendus</span>
+      <span><span class="swatch" style="background:#C9A227"></span>Loyers encaissés</span>
+      <span><span class="swatch" style="background:#dc2626"></span>Encaissement faible (&lt;60%)</span>
+    </div>`;
 }
 
 // ---------- Maisons ----------
@@ -870,7 +948,7 @@ document.getElementById("form-maison").addEventListener("submit", async (e) => {
     annulerEditMaison();
     await refreshAll();
   } catch (err) {
-    alert(err.message);
+    toast(err.message, "error");
   }
 });
 
@@ -927,7 +1005,7 @@ document.getElementById("form-locataire").addEventListener("submit", async (e) =
     annulerEditLocataire();
     await refreshAll();
   } catch (err) {
-    alert(err.message);
+    toast(err.message, "error");
   }
 });
 
@@ -974,7 +1052,7 @@ async function genererPortailLocataire(id) {
     await navigator.clipboard.writeText(data.portail_url).catch(() => {});
     prompt("Lien du portail locataire (copié dans le presse-papiers si autorisé) :", data.portail_url);
   } catch (err) {
-    alert(err.message);
+    toast(err.message, "error");
   }
 }
 
@@ -987,7 +1065,7 @@ async function creerAccesLocataire(id, nom, emailActuel) {
     const compte = await apiFetch(`/locataires/${id}/compte`, { method: "POST", body: JSON.stringify({ email, password }) });
     alert(`Accès créé pour ${compte.nom} — communiquez-lui ces identifiants :\nEmail : ${compte.email}\nMot de passe : ${password}`);
   } catch (err) {
-    alert(err.message);
+    toast(err.message, "error");
   }
 }
 
@@ -1004,7 +1082,7 @@ document.getElementById("form-bail").addEventListener("submit", async (e) => {
     e.target.reset();
     await refreshAll();
   } catch (err) {
-    alert(err.message);
+    toast(err.message, "error");
   }
 });
 
@@ -1028,7 +1106,7 @@ async function resilierBail(id) {
     await apiFetch(`/baux/${id}`, { method: "PUT", body: JSON.stringify({ ...bail, statut: "resilie" }) });
     await refreshAll();
   } catch (err) {
-    alert(err.message);
+    toast(err.message, "error");
   }
 }
 
@@ -1057,7 +1135,7 @@ document.getElementById("form-paiement").addEventListener("submit", async (e) =>
     e.target.reset();
     await refreshAll();
   } catch (err) {
-    alert(err.message);
+    toast(err.message, "error");
   }
 });
 
@@ -1095,7 +1173,7 @@ document.addEventListener("change", (e) => {
 
 async function telechargerQuittance(paiementId) {
   const res = await fetch(`${API}/paiements/${paiementId}/quittance`, { headers: authHeaders() });
-  if (!res.ok) { alert("Impossible de générer la quittance"); return; }
+  if (!res.ok) { toast("Impossible de générer la quittance", "error"); return; }
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -1115,7 +1193,7 @@ document.getElementById("form-ticket").addEventListener("submit", async (e) => {
     e.target.reset();
     await refreshAll();
   } catch (err) {
-    alert(err.message);
+    toast(err.message, "error");
   }
 });
 
@@ -1138,7 +1216,7 @@ async function avancerTicket(id, nouveauStatut) {
     await apiFetch(`/tickets/${id}`, { method: "PUT", body: JSON.stringify({ ...ticket, statut: nouveauStatut }) });
     await refreshAll();
   } catch (err) {
-    alert(err.message);
+    toast(err.message, "error");
   }
 }
 
@@ -1155,7 +1233,7 @@ if (userForm) {
       e.target.reset();
       await refreshAll();
     } catch (err) {
-      alert(err.message);
+      toast(err.message, "error");
     }
   });
 }
@@ -1197,7 +1275,7 @@ if (monProfilForm) {
       document.getElementById("profil-current-password").value = "";
       document.getElementById("profil-new-password").value = "";
       if (emailChanged) {
-        alert("Email modifié avec succès. Merci de vous reconnecter avec votre nouvel email.");
+        toast("Email modifié avec succès. Merci de vous reconnecter avec votre nouvel email.", "success", 6000);
         logout();
         return;
       }
@@ -1239,7 +1317,7 @@ if (depenseForm) {
       e.target.reset();
       await refreshAll();
     } catch (err) {
-      alert(err.message);
+      toast(err.message, "error");
     }
   });
 }
@@ -1288,7 +1366,7 @@ if (observationForm) {
       e.target.reset();
       await refreshAll();
     } catch (err) {
-      alert(err.message);
+      toast(err.message, "error");
     }
   });
 }
@@ -1341,7 +1419,7 @@ async function repondreObservation(id) {
     await apiFetch(`/observations/${id}/repondre`, { method: "PUT", body: JSON.stringify({ reponse }) });
     await refreshAll();
   } catch (err) {
-    alert(err.message);
+    toast(err.message, "error");
   }
 }
 
@@ -1399,7 +1477,7 @@ async function telechargerFichier(path, filename) {
     a.remove();
     URL.revokeObjectURL(url);
   } catch (err) {
-    alert(err.message);
+    toast(err.message, "error");
   }
 }
 
@@ -1553,7 +1631,7 @@ async function deleteItem(resource, id) {
     await apiFetch(`/${resource}/${id}`, { method: "DELETE" });
     await refreshAll();
   } catch (err) {
-    alert(err.message);
+    toast(err.message, "error");
   }
 }
 
