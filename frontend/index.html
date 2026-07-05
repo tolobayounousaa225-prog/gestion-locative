@@ -193,6 +193,8 @@
     body * { visibility: hidden; }
     #view-bilan, #view-bilan * { visibility: visible; }
     #view-bilan { position: absolute; left: 0; top: 0; width: 100%; padding: 10px; }
+    body.print-locataires #view-locataires, body.print-locataires #view-locataires * { visibility: visible; }
+    body.print-locataires #view-locataires { display: block !important; position: absolute; left: 0; top: 0; width: 100%; padding: 10px; }
     .no-print { display: none !important; }
   }
 </style>
@@ -271,12 +273,14 @@
     <button data-view="locataires">👥 Locataires</button>
     <button data-view="baux">📃 Baux</button>
     <button data-view="paiements">💰 Paiements</button>
+    <button data-view="rappels" id="nav-rappels" class="hidden">🔔 Rappels</button>
     <button data-view="tickets">🔧 Maintenance</button>
     <button data-view="depenses" id="nav-depenses" class="hidden">💸 Dépenses</button>
     <button data-view="observations">✉️ Observations<span id="obs-badge" class="nav-badge hidden">0</span></button>
     <button data-view="bilan" id="nav-bilan" class="hidden">📈 Bilan</button>
     <button data-view="historique">🗂️ Historique</button>
     <button data-view="utilisateurs" id="nav-utilisateurs" class="hidden">🔑 Utilisateurs</button>
+    <button data-view="audit" id="nav-audit" class="hidden">🛡️ Journal de connexion</button>
   </nav>
 
   <main>
@@ -327,12 +331,13 @@
     <!-- LOCATAIRES -->
     <section class="view" id="view-locataires">
       <div class="page-title"><div class="bar"></div><h2>Locataires</h2></div>
-      <div class="panel gerant-only">
+      <div class="panel gerant-only no-print">
         <div class="panel-header"><strong id="locataire-form-title">Nouveau locataire</strong></div>
         <form id="form-locataire" class="form-grid">
           <input type="hidden" name="edit_id" id="locataire-edit-id">
           <div><label>Nom</label><input name="nom" required></div>
           <div><label>Téléphone</label><input name="telephone"></div>
+          <div><label>Email</label><input name="email" type="email"></div>
           <div><label>Pièce d'identité</label><input name="piece_identite"></div>
           <div><label>Contact d'urgence</label><input name="contact_urgence"></div>
           <div style="align-self:end; display:flex; gap:6px;">
@@ -342,8 +347,14 @@
         </form>
       </div>
       <div class="panel">
-        <div class="panel-header"><strong>Liste des locataires</strong></div>
-        <table><thead><tr><th>Nom</th><th>Téléphone</th><th>Pièce ID</th><th>Contact urgence</th><th></th></tr></thead>
+        <div class="panel-header" style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+          <strong>Liste des locataires</strong>
+          <div style="display:flex; gap:8px;">
+            <button type="button" class="secondary" onclick="imprimerLocataires()">🖨️ Imprimer</button>
+            <button type="button" class="secondary" onclick="telechargerLocatairesPdf()">⬇️ Télécharger PDF</button>
+          </div>
+        </div>
+        <table id="table-locataires"><thead><tr><th>Nom</th><th>Téléphone</th><th>Email</th><th>Pièce ID</th><th>Contact urgence</th><th class="no-print gerant-only"></th></tr></thead>
           <tbody id="locataires-list"></tbody>
         </table>
       </div>
@@ -376,6 +387,14 @@
     <section class="view" id="view-paiements">
       <div class="page-title"><div class="bar"></div><h2>Paiements</h2></div>
       <div class="panel gerant-only">
+        <div class="panel-header" style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+          <strong>Échéancier mensuel</strong>
+          <button type="button" class="secondary" onclick="genererEcheancierMois()">📅 Générer l'échéancier du mois</button>
+        </div>
+        <div style="font-size:12.5px; color:var(--muted);">Crée automatiquement un paiement « en attente » pour chaque bail actif du mois courant qui n'en a pas encore.</div>
+        <div id="echeancier-msg" style="margin-top:8px;"></div>
+      </div>
+      <div class="panel gerant-only">
         <div class="panel-header"><strong>Enregistrer un encaissement</strong></div>
         <form id="form-paiement" class="form-grid">
           <div><label>Bail</label><select name="bail_id" id="paiement-bail-select" required></select></div>
@@ -398,6 +417,22 @@
           <tbody id="paiements-list"></tbody>
         </table>
         <div class="empty-note" id="paiements-empty-note">Choisissez une maison ci-dessus pour afficher son historique de paiements.</div>
+      </div>
+    </section>
+
+    <!-- RAPPELS D'IMPAYÉS -->
+    <section class="view" id="view-rappels">
+      <div class="page-title"><div class="bar"></div><h2>Rappels d'impayés</h2></div>
+      <div class="panel">
+        <div class="panel-header" style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+          <strong>Baux impayés du mois en cours</strong>
+          <button type="button" onclick="envoyerRappelsEmail()">✉️ Envoyer les rappels par email</button>
+        </div>
+        <div id="rappels-email-status" style="font-size:12.5px; color:var(--muted); margin-bottom:10px;"></div>
+        <div id="rappels-msg"></div>
+        <table><thead><tr><th>Locataire</th><th>Maison</th><th>Loyer</th><th>Email</th><th>Téléphone</th><th></th></tr></thead>
+          <tbody id="rappels-list"></tbody>
+        </table>
       </div>
     </section>
 
@@ -477,6 +512,8 @@
           <div><label>Mois</label><input type="month" id="bilan-mois-input"></div>
           <div><button type="button" onclick="genererBilan()">Générer le bilan</button></div>
           <div><button type="button" class="secondary" id="bilan-print-btn" onclick="window.print()" disabled>🖨️ Imprimer</button></div>
+          <div><button type="button" class="secondary" id="bilan-pdf-btn" onclick="telechargerBilanPdf()" disabled>⬇️ PDF</button></div>
+          <div><button type="button" class="secondary" id="bilan-excel-btn" onclick="telechargerBilanExcel()" disabled>⬇️ Excel</button></div>
         </div>
         <div class="empty-note" id="bilan-loading"></div>
       </div>
@@ -514,6 +551,18 @@
     <section class="view" id="view-utilisateurs">
       <div class="page-title"><div class="bar"></div><h2>Utilisateurs</h2></div>
       <div class="panel">
+        <div class="panel-header"><strong>Mon profil</strong></div>
+        <form id="form-mon-profil" class="form-grid">
+          <div><label>Nom</label><input name="nom" id="profil-nom" required></div>
+          <div><label>Email</label><input name="email" type="email" id="profil-email" required></div>
+          <div><label>Mot de passe actuel</label><input name="current_password" type="password" id="profil-current-password" autocomplete="current-password"></div>
+          <div><label>Nouveau mot de passe (optionnel)</label><input name="new_password" type="password" id="profil-new-password" minlength="4" autocomplete="new-password"></div>
+          <div style="align-self:end"><button type="submit">Enregistrer</button></div>
+        </form>
+        <div style="font-size:12.5px; color:var(--muted); margin-top:6px;">Le mot de passe actuel n'est requis que si vous modifiez l'email ou le mot de passe. Si vous changez d'email, vous devrez vous reconnecter.</div>
+        <div id="profil-msg" style="margin-top:10px;"></div>
+      </div>
+      <div class="panel">
         <div class="panel-header"><strong>Créer un compte propriétaire</strong></div>
         <form id="form-user" class="form-grid">
           <div><label>Nom</label><input name="nom" required></div>
@@ -529,6 +578,17 @@
         <div class="panel-header"><strong>Comptes existants</strong></div>
         <table><thead><tr><th>Nom</th><th>Email</th><th>Rôle</th><th></th></tr></thead>
           <tbody id="users-list"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- AUDIT / JOURNAL DE CONNEXION -->
+    <section class="view" id="view-audit">
+      <div class="page-title"><div class="bar"></div><h2>Journal de connexion</h2></div>
+      <div class="panel">
+        <div class="panel-header"><strong>Dernières tentatives de connexion (200 max)</strong></div>
+        <table><thead><tr><th>Date</th><th>Email</th><th>Résultat</th><th>IP</th><th>Navigateur</th></tr></thead>
+          <tbody id="audit-list"></tbody>
         </table>
       </div>
     </section>
@@ -621,13 +681,20 @@ document.getElementById("forgot-submit-btn").addEventListener("click", async () 
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.detail || "Erreur lors de la génération du lien.");
-    resultBox.innerHTML = `
-      <div style="background:#dcfce7; color:var(--ok); padding:10px 12px; border-radius:8px; font-size:13px; margin-bottom:10px;">
-        Lien généré (valable 1 heure). Copiez-le et ouvrez-le pour définir un nouveau mot de passe :
-      </div>
-      <div style="word-break:break-all; background:#fbfcfd; border:1.5px solid var(--border); border-radius:8px; padding:10px 12px; font-size:12.5px; margin-bottom:10px;">
-        <a href="${data.reset_url}" target="_blank">${data.reset_url}</a>
-      </div>`;
+    if (data.envoye) {
+      resultBox.innerHTML = `
+        <div style="background:#dcfce7; color:var(--ok); padding:10px 12px; border-radius:8px; font-size:13px; margin-bottom:10px;">
+          ✓ ${data.message} Vérifiez votre boîte de réception.
+        </div>`;
+    } else {
+      resultBox.innerHTML = `
+        <div style="background:#dcfce7; color:var(--ok); padding:10px 12px; border-radius:8px; font-size:13px; margin-bottom:10px;">
+          Lien généré (valable 1 heure). Copiez-le et ouvrez-le pour définir un nouveau mot de passe :
+        </div>
+        <div style="word-break:break-all; background:#fbfcfd; border:1.5px solid var(--border); border-radius:8px; padding:10px 12px; font-size:12.5px; margin-bottom:10px;">
+          <a href="${data.reset_url}" target="_blank">${data.reset_url}</a>
+        </div>`;
+    }
   } catch (err) {
     errBox.textContent = err.message;
     errBox.classList.remove("hidden");
@@ -653,12 +720,19 @@ async function showApp() {
   roleTag.textContent = ME.role === "gerant" ? "Gérant" : "Propriétaire";
   roleTag.className = "role-tag badge " + ME.role;
 
+  const profilNom = document.getElementById("profil-nom");
+  const profilEmail = document.getElementById("profil-email");
+  if (profilNom) profilNom.value = ME.nom;
+  if (profilEmail) profilEmail.value = ME.email;
+
   const isGerant = ME.role === "gerant";
   document.querySelectorAll(".gerant-only").forEach(el => el.classList.toggle("hidden", !isGerant));
   document.querySelectorAll(".proprietaire-only").forEach(el => el.classList.toggle("hidden", isGerant));
   document.getElementById("nav-utilisateurs").classList.toggle("hidden", !isGerant);
   document.getElementById("nav-depenses").classList.toggle("hidden", !isGerant);
   document.getElementById("nav-bilan").classList.toggle("hidden", !isGerant);
+  document.getElementById("nav-rappels").classList.toggle("hidden", !isGerant);
+  document.getElementById("nav-audit").classList.toggle("hidden", !isGerant);
   document.getElementById("observations-title").textContent = isGerant ? "Boîte à messages" : "Mes observations";
 
   const bilanInput = document.getElementById("bilan-mois-input");
@@ -683,6 +757,8 @@ function showView(name) {
   document.querySelectorAll(".view").forEach(v => v.classList.toggle("active", v.id === "view-" + name));
   if (name === "dashboard") renderDashboard();
   if (name === "historique") chargerHistorique();
+  if (name === "rappels") chargerRappels();
+  if (name === "audit") chargerAudit();
 }
 
 // ---------- Data loading ----------
@@ -818,7 +894,7 @@ document.getElementById("form-locataire").addEventListener("submit", async (e) =
   const f = new FormData(e.target);
   const editId = f.get("edit_id");
   const payload = {
-    nom: f.get("nom"), telephone: f.get("telephone") || null,
+    nom: f.get("nom"), telephone: f.get("telephone") || null, email: f.get("email") || null,
     piece_identite: f.get("piece_identite") || null, contact_urgence: f.get("contact_urgence") || null,
   };
   try {
@@ -838,6 +914,7 @@ function editLocataire(l) {
   const form = document.getElementById("form-locataire");
   form.nom.value = l.nom || "";
   form.telephone.value = l.telephone || "";
+  form.email.value = l.email || "";
   form.piece_identite.value = l.piece_identite || "";
   form.contact_urgence.value = l.contact_urgence || "";
   document.getElementById("locataire-edit-id").value = l.id;
@@ -860,12 +937,23 @@ function renderLocataires() {
   const actifs = CACHE.locataires.filter(l => !l.archive);
   document.getElementById("locataires-list").innerHTML = actifs.map(l => `
     <tr>
-      <td>${l.nom}</td><td>${l.telephone || "—"}</td><td>${l.piece_identite || "—"}</td><td>${l.contact_urgence || "—"}</td>
-      <td class="actions-row gerant-only ${ME && ME.role !== 'gerant' ? 'hidden' : ''}">
+      <td>${l.nom}</td><td>${l.telephone || "—"}</td><td>${l.email || "—"}</td><td>${l.piece_identite || "—"}</td><td>${l.contact_urgence || "—"}</td>
+      <td class="actions-row gerant-only no-print ${ME && ME.role !== 'gerant' ? 'hidden' : ''}">
         <button class="secondary" onclick='editLocataire(${JSON.stringify(l).replace(/'/g, "&apos;")})'>Modifier</button>
+        <button class="secondary" onclick="genererPortailLocataire(${l.id})">Portail</button>
         <button class="danger" onclick="deleteItem('locataires', ${l.id})">Suppr.</button>
       </td>
-    </tr>`).join("") || `<tr><td colspan="5" class="empty-note">Aucun locataire</td></tr>`;
+    </tr>`).join("") || `<tr><td colspan="6" class="empty-note">Aucun locataire</td></tr>`;
+}
+
+async function genererPortailLocataire(id) {
+  try {
+    const data = await apiFetch(`/locataires/${id}/portail-token`, { method: "POST" });
+    await navigator.clipboard.writeText(data.portail_url).catch(() => {});
+    prompt("Lien du portail locataire (copié dans le presse-papiers si autorisé) :", data.portail_url);
+  } catch (err) {
+    alert(err.message);
+  }
 }
 
 // ---------- Baux ----------
@@ -910,6 +998,18 @@ async function resilierBail(id) {
 }
 
 // ---------- Paiements ----------
+async function genererEcheancierMois() {
+  const msgBox = document.getElementById("echeancier-msg");
+  msgBox.innerHTML = "";
+  try {
+    const data = await apiFetch("/paiements/generer-echeancier", { method: "POST" });
+    msgBox.innerHTML = `<div style="background:#dcfce7; color:#16a34a; padding:8px 10px; border-radius:8px; font-size:13px;">✓ ${data.paiements_crees} paiement(s) créé(s) pour ${data.mois}.</div>`;
+    await refreshAll();
+  } catch (err) {
+    msgBox.innerHTML = `<div class="error">${err.message}</div>`;
+  }
+}
+
 document.getElementById("form-paiement").addEventListener("submit", async (e) => {
   e.preventDefault();
   const f = new FormData(e.target);
@@ -1035,6 +1135,61 @@ function renderUsers() {
     </tr>`).join("") || `<tr><td colspan="4" class="empty-note">Aucun utilisateur</td></tr>`;
 }
 
+// ---------- Mon profil ----------
+const monProfilForm = document.getElementById("form-mon-profil");
+if (monProfilForm) {
+  monProfilForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    const msgBox = document.getElementById("profil-msg");
+    msgBox.innerHTML = "";
+    const nom = f.get("nom").trim();
+    const email = f.get("email").trim();
+    const currentPassword = f.get("current_password");
+    const newPassword = f.get("new_password");
+    const emailChanged = email !== ME.email;
+
+    if ((newPassword || emailChanged) && !currentPassword) {
+      msgBox.innerHTML = `<div class="error">Mot de passe actuel requis pour modifier l'email ou le mot de passe.</div>`;
+      return;
+    }
+    try {
+      const payload = { nom };
+      if (emailChanged) payload.email = email;
+      if (newPassword) payload.new_password = newPassword;
+      if (currentPassword) payload.current_password = currentPassword;
+      const updated = await apiFetch("/auth/me", { method: "PUT", body: JSON.stringify(payload) });
+      document.getElementById("profil-current-password").value = "";
+      document.getElementById("profil-new-password").value = "";
+      if (emailChanged) {
+        alert("Email modifié avec succès. Merci de vous reconnecter avec votre nouvel email.");
+        logout();
+        return;
+      }
+      ME = updated;
+      document.getElementById("user-nom").textContent = ME.nom;
+      msgBox.innerHTML = `<div style="background:#dcfce7; color:var(--ok, #16a34a); padding:8px 10px; border-radius:8px; font-size:13px;">✓ Profil mis à jour avec succès.</div>`;
+    } catch (err) {
+      msgBox.innerHTML = `<div class="error">${err.message}</div>`;
+    }
+  });
+}
+
+// ---------- Impression / export PDF des locataires ----------
+function imprimerLocataires() {
+  document.body.classList.add("print-locataires");
+  const cleanup = () => {
+    document.body.classList.remove("print-locataires");
+    window.removeEventListener("afterprint", cleanup);
+  };
+  window.addEventListener("afterprint", cleanup);
+  window.print();
+}
+
+function telechargerLocatairesPdf() {
+  telechargerFichier("/locataires/export/pdf", "liste_locataires.pdf");
+}
+
 // ---------- Dépenses ----------
 const depenseForm = document.getElementById("form-depense");
 if (depenseForm) {
@@ -1142,6 +1297,8 @@ async function repondreObservation(id) {
 }
 
 // ---------- Bilan mensuel ----------
+let BILAN_MOIS_ACTUEL = null;
+
 async function genererBilan() {
   const mois = document.getElementById("bilan-mois-input").value;
   if (!mois) return;
@@ -1150,7 +1307,10 @@ async function genererBilan() {
   try {
     const b = await apiFetch(`/bilan/${mois}`);
     loading.textContent = "";
+    BILAN_MOIS_ACTUEL = mois;
     document.getElementById("bilan-print-btn").disabled = false;
+    document.getElementById("bilan-pdf-btn").disabled = false;
+    document.getElementById("bilan-excel-btn").disabled = false;
 
     document.getElementById("bilan-titre").textContent = `Bilan mensuel — ${b.societe}`;
     document.getElementById("bilan-souscritre").textContent = `Période : ${b.mois} · Généré le ${new Date(b.genere_le).toLocaleString("fr-FR")}`;
@@ -1174,6 +1334,34 @@ async function genererBilan() {
   } catch (err) {
     loading.textContent = "Erreur : " + err.message;
   }
+}
+
+async function telechargerFichier(path, filename) {
+  try {
+    const res = await fetch(API + path, { headers: authHeaders() });
+    if (!res.ok) throw new Error("Erreur lors de la génération du fichier.");
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
+function telechargerBilanPdf() {
+  if (!BILAN_MOIS_ACTUEL) return;
+  telechargerFichier(`/bilan/${BILAN_MOIS_ACTUEL}/pdf`, `bilan_${BILAN_MOIS_ACTUEL}.pdf`);
+}
+
+function telechargerBilanExcel() {
+  if (!BILAN_MOIS_ACTUEL) return;
+  telechargerFichier(`/bilan/${BILAN_MOIS_ACTUEL}/excel`, `bilan_${BILAN_MOIS_ACTUEL}.xlsx`);
 }
 
 // ---------- Selecteurs ----------
@@ -1226,6 +1414,55 @@ async function chargerHistorique() {
         <td>${h.date_debut || "—"} → ${h.date_fin || "—"}</td>
         <td>${badge(h.statut_bail)}</td>
       </tr>`).join("") || `<tr><td colspan="5" class="empty-note">Aucun ancien locataire pour le moment</td></tr>`;
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="5" class="empty-note">Erreur : ${err.message}</td></tr>`;
+  }
+}
+
+// ---------- Rappels d'impayés ----------
+async function chargerRappels() {
+  const tbody = document.getElementById("rappels-list");
+  const statusBox = document.getElementById("rappels-email-status");
+  if (!tbody) return;
+  try {
+    const data = await apiFetch("/rappels/impayes");
+    statusBox.textContent = data.email_active
+      ? "Envoi automatique par email activé (SMTP configuré)."
+      : "Envoi automatique par email non configuré (variables SMTP_* absentes) — utilisez les liens WhatsApp ci-dessous pour un rappel manuel.";
+    tbody.innerHTML = data.impayes.map(r => `
+      <tr>
+        <td>${r.locataire_nom}</td><td>${r.maison_adresse}</td><td>${r.loyer_mensuel}</td>
+        <td>${r.locataire_email || "—"}</td><td>${r.locataire_telephone || "—"}</td>
+        <td class="actions-row">${r.whatsapp_url ? `<a href="${r.whatsapp_url}" target="_blank"><button type="button" class="secondary">💬 WhatsApp</button></a>` : ""}</td>
+      </tr>`).join("") || `<tr><td colspan="6" class="empty-note">Aucun impayé ce mois-ci 🎉</td></tr>`;
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="6" class="empty-note">Erreur : ${err.message}</td></tr>`;
+  }
+}
+
+async function envoyerRappelsEmail() {
+  const msgBox = document.getElementById("rappels-msg");
+  msgBox.innerHTML = "";
+  try {
+    await apiFetch("/rappels/envoyer", { method: "POST" });
+    msgBox.innerHTML = `<div style="background:#dcfce7; color:#16a34a; padding:8px 10px; border-radius:8px; font-size:13px; margin-bottom:10px;">✓ Rappels envoyés par email aux locataires disposant d'une adresse email.</div>`;
+  } catch (err) {
+    msgBox.innerHTML = `<div class="error">${err.message}</div>`;
+  }
+}
+
+// ---------- Journal d'audit des connexions ----------
+async function chargerAudit() {
+  const tbody = document.getElementById("audit-list");
+  if (!tbody) return;
+  try {
+    const data = await apiFetch("/audit/logins");
+    tbody.innerHTML = data.map(l => `
+      <tr>
+        <td>${new Date(l.date_creation).toLocaleString("fr-FR")}</td><td>${l.email}</td>
+        <td>${l.succes ? '<span class="badge paye">Succès</span>' : '<span class="badge en_retard">Échec</span>'}</td>
+        <td>${l.ip || "—"}</td><td style="max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${l.user_agent || "—"}</td>
+      </tr>`).join("") || `<tr><td colspan="5" class="empty-note">Aucune connexion enregistrée</td></tr>`;
   } catch (err) {
     tbody.innerHTML = `<tr><td colspan="5" class="empty-note">Erreur : ${err.message}</td></tr>`;
   }

@@ -6,9 +6,13 @@ Rôles : gérant (accès complet) et propriétaire (accès en lecture à ses pro
 Paiements en espèces. Génération de quittance PDF professionnelle après chaque encaissement.
 """
 import io
+import logging
 import os
 import secrets
 import calendar
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from datetime import date, datetime, timedelta
 from typing import List, Optional
 
@@ -39,6 +43,19 @@ try:
 except ImportError:
     http_requests = None
 
+try:
+    from apscheduler.schedulers.background import BackgroundScheduler
+except ImportError:
+    BackgroundScheduler = None
+
+try:
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+except ImportError:
+    Workbook = None
+
+logger = logging.getLogger("gestion_locative")
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -57,6 +74,14 @@ SOCIETE_GERANT = os.environ.get("SOCIETE_GERANT", "M. TOURÉ")
 DEVISE = os.environ.get("DEVISE", "FCFA")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-3-5-haiku-20241022")
+
+SMTP_HOST = os.environ.get("SMTP_HOST", "")
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
+SMTP_USER = os.environ.get("SMTP_USER", "")
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
+SMTP_FROM = os.environ.get("SMTP_FROM", SMTP_USER)
+SMTP_USE_TLS = os.environ.get("SMTP_USE_TLS", "true").lower() != "false"
+EMAIL_ENABLED = bool(SMTP_HOST and SMTP_USER and SMTP_PASSWORD)
 
 connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
 engine = create_engine(DATABASE_URL, connect_args=connect_args)
@@ -102,11 +127,23 @@ class Locataire(Base):
     id = Column(Integer, primary_key=True, index=True)
     nom = Column(String, nullable=False)
     telephone = Column(String, nullable=True)
+    email = Column(String, nullable=True)
     piece_identite = Column(String, nullable=True)
     contact_urgence = Column(String, nullable=True)
     archive = Column(Boolean, default=False)  # ancien locataire conservé pour l'historique par maison
+    portail_token = Column(String, nullable=True, unique=True)  # accès au portail locataire en lecture seule
 
     baux = relationship("Bail", back_populates="locataire")
+
+
+class LoginLog(Base):
+    __tablename__ = "login_logs"
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, nullable=False)
+    succes = Column(Boolean, default=False)
+    ip = Column(String, nullable=True)
+    user_agent = Column(String, nullable=True)
+    date_creation = Column(DateTime, default=datetime.utcnow)
 
 
 class Bail(Base):
@@ -207,6 +244,8 @@ try:
     _add_column_if_missing("maisons", "proprietaire_id", "INTEGER")
     _add_column_if_missing("paiements", "verification_code", "VARCHAR")
     _add_column_if_missing("locataires", "archive", "BOOLEAN")
+    _add_column_if_missing("locataires", "email", "VARCHAR")
+    _add_column_if_missing("locataires", "portail_token", "VARCHAR")
     _add_column_if_missing("users", "reset_token", "VARCHAR")
     _add_column_if_missing("users", "reset_token_expiry", "TIMESTAMP")
 except Exception:
@@ -236,6 +275,13 @@ class UserOut(BaseModel):
     role: str
 
 
+class UpdateMeIn(BaseModel):
+    nom: Optional[str] = None
+    email: Optional[str] = None
+    current_password: Optional[str] = None
+    new_password: Optional[str] = None
+
+
 class ForgotPasswordIn(BaseModel):
     email: str
 
@@ -262,6 +308,7 @@ class MaisonOut(MaisonIn):
 class LocataireIn(BaseModel):
     nom: str
     telephone: Optional[str] = None
+    email: Optional[str] = None
     piece_identite: Optional[str] = None
     contact_urgence: Optional[str] = None
 
@@ -270,6 +317,7 @@ class LocataireOut(LocataireIn):
     model_config = ConfigDict(from_attributes=True)
     id: int
     archive: bool = False
+    portail_token: Optional[str] = None
 
 
 class BailIn(BaseModel):
@@ -347,6 +395,16 @@ class ObservationOut(BaseModel):
     lu: bool
     reponse: Optional[str] = None
     date_reponse: Optional[datetime] = None
+
+
+class LoginLogOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    email: str
+    succes: bool
+    ip: Optional[str] = None
+    user_agent: Optional[str] = None
+    date_creation: datetime
 
 
 # ---------------------------------------------------------------------------
@@ -427,6 +485,113 @@ def ensure_default_admin():
         db.close()
 
 
+def send_email(to: str, subject: str, html_body: str) -> bool:
+    """Envoie un email via SMTP si EMAIL_ENABLED (variables SMTP_* configurées).
+    Retourne False sans lever d'exception si l'envoi échoue ou n'est pas configuré,
+    pour ne jamais bloquer le flux appelant (reset de mot de passe, rappels...)."""
+    if not EMAIL_ENABLED or not to:
+        return False
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = SMTP_FROM
+        msg["To"] = to
+        msg.attach(MIMEText(html_body, "html"))
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as server:
+            if SMTP_USE_TLS:
+                server.starttls()
+            server.login(SMTP_USER, SMTP_PASSWORD)
+            server.sendmail(SMTP_FROM, [to], msg.as_string())
+        return True
+    except Exception:
+        logger.exception("Échec de l'envoi d'email à %s", to)
+        return False
+
+
+def whatsapp_lien(telephone: Optional[str], message: str) -> Optional[str]:
+    """Construit un lien wa.me pré-rempli pour un rappel manuel en un clic (pas d'API tierce requise)."""
+    if not telephone:
+        return None
+    numero = "".join(ch for ch in telephone if ch.isdigit())
+    if not numero:
+        return None
+    from urllib.parse import quote
+    return f"https://wa.me/{numero}?text={quote(message)}"
+
+
+def generer_echeancier_mois(db: Session, mois: str) -> int:
+    """Crée un paiement 'en_attente' pour chaque bail actif qui n'a pas encore de paiement pour ce mois.
+    Idempotent : peut être appelé plusieurs fois sans dupliquer les paiements existants."""
+    baux_actifs = db.query(Bail).filter(Bail.statut == "actif").all()
+    bail_ids_avec_paiement = {
+        p.bail_id for p in db.query(Paiement).filter(Paiement.mois_concerne == mois).all()
+    }
+    cree = 0
+    for bail in baux_actifs:
+        if bail.id in bail_ids_avec_paiement:
+            continue
+        db.add(Paiement(
+            bail_id=bail.id,
+            mois_concerne=mois,
+            montant=bail.loyer_mensuel,
+            statut="en_attente",
+        ))
+        cree += 1
+    if cree:
+        db.commit()
+    return cree
+
+
+def verifier_et_envoyer_rappels_impayes() -> None:
+    """Job planifié : pour chaque bail actif impayé du mois courant, envoie un email de rappel
+    au locataire si son email est renseigné et que SMTP est configuré."""
+    if not EMAIL_ENABLED:
+        return
+    db = SessionLocal()
+    try:
+        mois_courant = date.today().strftime("%Y-%m")
+        baux_actifs = db.query(Bail).filter(Bail.statut == "actif").all()
+        paiements_mois = db.query(Paiement).filter(Paiement.mois_concerne == mois_courant).all()
+        bail_ids_payes = {p.bail_id for p in paiements_mois if p.statut == "paye"}
+        for bail in baux_actifs:
+            if bail.id in bail_ids_payes:
+                continue
+            locataire = db.query(Locataire).get(bail.locataire_id)
+            maison = db.query(Maison).get(bail.maison_id)
+            if not locataire or not locataire.email:
+                continue
+            sujet = f"Rappel — loyer de {mois_courant} en attente ({SOCIETE_NOM})"
+            montant_fmt = f"{bail.loyer_mensuel:,.0f}".replace(",", " ")
+            corps = (
+                f"<p>Bonjour {locataire.nom},</p>"
+                f"<p>Nous vous rappelons que le loyer du mois de <b>{mois_courant}</b> "
+                f"pour le logement situé à <b>{maison.adresse if maison else ''}</b> "
+                f"(montant : {montant_fmt} {DEVISE}) reste en attente de règlement.</p>"
+                f"<p>Merci de bien vouloir régulariser votre situation dans les meilleurs délais.</p>"
+                f"<p>Cordialement,<br>{SOCIETE_GERANT}<br>{SOCIETE_NOM}</p>"
+            )
+            send_email(locataire.email, sujet, corps)
+    finally:
+        db.close()
+
+
+def job_generation_echeancier_mensuel() -> None:
+    db = SessionLocal()
+    try:
+        mois_courant = date.today().strftime("%Y-%m")
+        generer_echeancier_mois(db, mois_courant)
+    finally:
+        db.close()
+
+
+scheduler = None
+if BackgroundScheduler is not None:
+    scheduler = BackgroundScheduler(timezone="UTC")
+    scheduler.add_job(verifier_et_envoyer_rappels_impayes, "cron", hour=8, id="rappels_impayes", replace_existing=True)
+    scheduler.add_job(job_generation_echeancier_mensuel, "cron", day=1, hour=1, id="echeancier_mensuel", replace_existing=True)
+    scheduler.start()
+
+
 # ---------------------------------------------------------------------------
 # App
 # ---------------------------------------------------------------------------
@@ -444,9 +609,17 @@ ensure_default_admin()
 
 
 @app.post("/api/auth/login", response_model=Token)
-def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == form_data.username).first()
-    if not user or not verify_password(form_data.password, user.mot_de_passe_hash):
+    succes = bool(user and verify_password(form_data.password, user.mot_de_passe_hash))
+    db.add(LoginLog(
+        email=form_data.username,
+        succes=succes,
+        ip=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    ))
+    db.commit()
+    if not succes:
         raise HTTPException(status_code=401, detail="Email ou mot de passe incorrect")
     token = create_access_token({"sub": user.email})
     return Token(access_token=token)
@@ -454,6 +627,34 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
 
 @app.get("/api/auth/me")
 def me(current_user: User = Depends(get_current_user)):
+    return {"id": current_user.id, "nom": current_user.nom, "email": current_user.email, "role": current_user.role}
+
+
+@app.put("/api/auth/me")
+def update_me(data: UpdateMeIn, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    wants_password_change = bool(data.new_password)
+    wants_email_change = bool(data.email) and data.email != current_user.email
+
+    if (wants_password_change or wants_email_change) and not data.current_password:
+        raise HTTPException(400, "Mot de passe actuel requis pour modifier l'email ou le mot de passe.")
+    if (wants_password_change or wants_email_change) and not verify_password(data.current_password, current_user.mot_de_passe_hash):
+        raise HTTPException(400, "Mot de passe actuel incorrect.")
+
+    if wants_email_change:
+        if db.query(User).filter(User.email == data.email, User.id != current_user.id).first():
+            raise HTTPException(400, "Cet email est déjà utilisé.")
+        current_user.email = data.email
+
+    if data.nom:
+        current_user.nom = data.nom
+
+    if wants_password_change:
+        if len(data.new_password) < 4:
+            raise HTTPException(400, "Le mot de passe doit contenir au moins 4 caractères.")
+        current_user.mot_de_passe_hash = pwd_context.hash(data.new_password)
+
+    db.commit()
+    db.refresh(current_user)
     return {"id": current_user.id, "nom": current_user.nom, "email": current_user.email, "role": current_user.role}
 
 
@@ -472,6 +673,17 @@ def forgot_password(data: ForgotPasswordIn, request: Request, db: Session = Depe
     host = request.headers.get("x-forwarded-host", request.headers.get("host", request.url.netloc))
     base_url = f"{proto}://{host}"
     reset_url = f"{base_url}/reset-password.html?token={token}"
+
+    if EMAIL_ENABLED:
+        corps = (
+            f"<p>Bonjour {user.nom},</p>"
+            f"<p>Une demande de réinitialisation de mot de passe a été effectuée pour votre compte {SOCIETE_NOM}.</p>"
+            f"<p><a href=\"{reset_url}\">Cliquez ici pour choisir un nouveau mot de passe</a> (lien valable 1 heure).</p>"
+            f"<p>Si vous n'êtes pas à l'origine de cette demande, ignorez cet email.</p>"
+        )
+        if send_email(user.email, f"Réinitialisation du mot de passe — {SOCIETE_NOM}", corps):
+            return {"envoye": True, "message": "Un email de réinitialisation a été envoyé.", "expire_dans_minutes": 60}
+
     return {"reset_url": reset_url, "expire_dans_minutes": 60}
 
 
@@ -524,6 +736,12 @@ def delete_user(user_id: int, db: Session = Depends(get_db), current: User = Dep
     db.delete(user)
     db.commit()
     return {"ok": True}
+
+
+# ---------- Journal d'audit des connexions (gérant uniquement) ----------
+@app.get("/api/audit/logins", response_model=List[LoginLogOut])
+def list_login_logs(limit: int = 200, db: Session = Depends(get_db), _: User = Depends(require_gerant)):
+    return db.query(LoginLog).order_by(LoginLog.id.desc()).limit(min(limit, 500)).all()
 
 
 # ---------- Maisons ----------
@@ -590,6 +808,30 @@ def list_locataires(db: Session = Depends(get_db), current_user: User = Depends(
     return db.query(Locataire).all()
 
 
+@app.get("/api/locataires/export/pdf")
+def export_locataires_pdf(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    if current_user.role == "proprietaire":
+        maison_ids = owned_maison_ids(db, current_user)
+        locataire_ids = {b.locataire_id for b in db.query(Bail).filter(Bail.maison_id.in_(maison_ids)).all()}
+        locataires = db.query(Locataire).filter(Locataire.id.in_(locataire_ids)).order_by(Locataire.nom).all()
+    else:
+        locataires = db.query(Locataire).filter(Locataire.archive == False).order_by(Locataire.nom).all()
+
+    rows = []
+    for loc in locataires:
+        bail_actif = next((b for b in loc.baux if b.statut == "actif"), None)
+        maison_adresse = bail_actif.maison.adresse if bail_actif else None
+        loyer = bail_actif.loyer_mensuel if bail_actif else None
+        rows.append((loc, maison_adresse, loyer))
+
+    buffer = generer_liste_locataires_pdf(rows)
+    return StreamingResponse(
+        buffer,
+        media_type="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=liste_locataires.pdf"},
+    )
+
+
 @app.post("/api/locataires", response_model=LocataireOut)
 def create_locataire(data: LocataireIn, db: Session = Depends(get_db), _: User = Depends(require_gerant)):
     locataire = Locataire(**data.model_dump())
@@ -630,6 +872,50 @@ def delete_locataire(locataire_id: int, db: Session = Depends(get_db), _: User =
         db.rollback()
         raise HTTPException(409, "Impossible de supprimer ce locataire.")
     return {"ok": True, "archive": False}
+
+
+# ---------- Portail locataire (lecture seule, accès public par jeton) ----------
+@app.post("/api/locataires/{locataire_id}/portail-token")
+def generer_portail_token(locataire_id: int, request: Request, db: Session = Depends(get_db), _: User = Depends(require_gerant)):
+    locataire = db.query(Locataire).get(locataire_id)
+    if not locataire:
+        raise HTTPException(404, "Locataire introuvable")
+    locataire.portail_token = secrets.token_urlsafe(24)
+    db.commit()
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+    host = request.headers.get("x-forwarded-host", request.headers.get("host", request.url.netloc))
+    base_url = f"{proto}://{host}"
+    return {"portail_url": f"{base_url}/portail.html?token={locataire.portail_token}"}
+
+
+@app.get("/api/portail/{token}")
+def portail_locataire(token: str, db: Session = Depends(get_db)):
+    locataire = db.query(Locataire).filter(Locataire.portail_token == token).first()
+    if not locataire:
+        raise HTTPException(404, "Lien de portail invalide.")
+    baux = db.query(Bail).filter(Bail.locataire_id == locataire.id).order_by(Bail.date_debut.desc()).all()
+    baux_out = []
+    for b in baux:
+        maison = db.query(Maison).get(b.maison_id)
+        paiements = db.query(Paiement).filter(Paiement.bail_id == b.id).order_by(Paiement.mois_concerne.desc()).all()
+        baux_out.append({
+            "id": b.id,
+            "maison_adresse": maison.adresse if maison else "—",
+            "date_debut": str(b.date_debut),
+            "date_fin": str(b.date_fin) if b.date_fin else None,
+            "loyer_mensuel": b.loyer_mensuel,
+            "caution": b.caution,
+            "statut": b.statut,
+            "paiements": [
+                {"mois_concerne": p.mois_concerne, "montant": p.montant, "statut": p.statut, "date_paiement": str(p.date_paiement) if p.date_paiement else None}
+                for p in paiements
+            ],
+        })
+    return {
+        "societe": SOCIETE_NOM,
+        "locataire": {"nom": locataire.nom, "telephone": locataire.telephone, "email": locataire.email},
+        "baux": baux_out,
+    }
 
 
 # ---------- Historique des locataires (anciens occupants) ----------
@@ -734,6 +1020,57 @@ def create_paiement(data: PaiementIn, db: Session = Depends(get_db), _: User = D
     db.commit()
     db.refresh(paiement)
     return paiement
+
+
+# ---------- Échéancier mensuel (génération automatique) ----------
+@app.post("/api/paiements/generer-echeancier")
+def generer_echeancier(mois: Optional[str] = None, db: Session = Depends(get_db), _: User = Depends(require_gerant)):
+    mois_cible = mois or date.today().strftime("%Y-%m")
+    nb_crees = generer_echeancier_mois(db, mois_cible)
+    return {"mois": mois_cible, "paiements_crees": nb_crees}
+
+
+# ---------- Rappels d'impayés (email + lien WhatsApp pré-rempli) ----------
+@app.get("/api/rappels/impayes")
+def liste_rappels_impayes(db: Session = Depends(get_db), _: User = Depends(require_gerant)):
+    mois_courant = date.today().strftime("%Y-%m")
+    baux_actifs = db.query(Bail).filter(Bail.statut == "actif").all()
+    paiements_mois = db.query(Paiement).filter(Paiement.mois_concerne == mois_courant).all()
+    bail_ids_payes = {p.bail_id for p in paiements_mois if p.statut == "paye"}
+
+    resultats = []
+    for bail in baux_actifs:
+        if bail.id in bail_ids_payes:
+            continue
+        locataire = db.query(Locataire).get(bail.locataire_id)
+        maison = db.query(Maison).get(bail.maison_id)
+        if not locataire:
+            continue
+        montant_fmt = f"{bail.loyer_mensuel:,.0f}".replace(",", " ")
+        message = (
+            f"Bonjour {locataire.nom}, nous vous rappelons que le loyer de {mois_courant} "
+            f"({montant_fmt} {DEVISE}) pour {maison.adresse if maison else 'votre logement'} "
+            f"reste en attente de règlement. Merci de régulariser dans les meilleurs délais. — {SOCIETE_NOM}"
+        )
+        resultats.append({
+            "bail_id": bail.id,
+            "locataire_nom": locataire.nom,
+            "locataire_telephone": locataire.telephone,
+            "locataire_email": locataire.email,
+            "maison_adresse": maison.adresse if maison else "—",
+            "loyer_mensuel": bail.loyer_mensuel,
+            "whatsapp_url": whatsapp_lien(locataire.telephone, message),
+            "email_disponible": bool(locataire.email),
+        })
+    return {"mois": mois_courant, "email_active": EMAIL_ENABLED, "impayes": resultats}
+
+
+@app.post("/api/rappels/envoyer")
+def envoyer_rappels_impayes(_: User = Depends(require_gerant)):
+    if not EMAIL_ENABLED:
+        raise HTTPException(400, "Aucun serveur SMTP configuré (variables SMTP_HOST / SMTP_USER / SMTP_PASSWORD).")
+    verifier_et_envoyer_rappels_impayes()
+    return {"ok": True}
 
 
 # ---------- Génération PDF — quittance professionnelle ----------
@@ -959,6 +1296,75 @@ def generer_quittance_pdf(paiement, bail, maison, locataire, verify_url: str = "
             c.drawString(qr_x, qr_y - 17, "l'authenticité du document")
         except Exception:
             pass
+
+    c.showPage()
+    c.save()
+    buffer.seek(0)
+    return buffer
+
+
+def generer_liste_locataires_pdf(rows) -> io.BytesIO:
+    """rows : liste de tuples (locataire, maison_adresse, loyer_mensuel_ou_None)."""
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=A4)
+    width, height = A4
+    margin = 15 * mm
+    col_x = [margin, margin + 55 * mm, margin + 90 * mm, margin + 125 * mm, width - margin]
+    row_h = 8 * mm
+    header_h = 26 * mm
+
+    def draw_header(page_titre_suffixe=""):
+        c.setStrokeColor(BORDER)
+        c.setLineWidth(1)
+        c.rect(margin - 6, margin - 6, width - 2 * (margin - 6), height - 2 * (margin - 6))
+        c.setFillColor(NAVY)
+        c.rect(0, height - header_h, width, header_h, stroke=0, fill=1)
+        c.setFillColor(GOLD)
+        c.rect(0, height - header_h - 2, width, 2, stroke=0, fill=1)
+        c.setFillColor(colors.white)
+        c.setFont("Helvetica-Bold", 18)
+        c.drawString(margin, height - 13 * mm, SOCIETE_NOM)
+        c.setFillColor(GOLD)
+        c.setFont("Helvetica-Oblique", 9)
+        c.drawString(margin, height - 19 * mm, SOCIETE_TAGLINE)
+        c.setFillColor(colors.white)
+        c.setFont("Helvetica-Bold", 13)
+        c.drawRightString(width - margin, height - 13 * mm, "LISTE DES LOCATAIRES")
+        c.setFont("Helvetica", 8.5)
+        c.drawRightString(width - margin, height - 19 * mm, f"Généré le {date.today().strftime('%d/%m/%Y')}{page_titre_suffixe}")
+
+        y = height - header_h - 8 * mm
+        c.setFillColor(NAVY)
+        c.rect(margin, y - row_h, width - 2 * margin, row_h, stroke=0, fill=1)
+        c.setFillColor(colors.white)
+        c.setFont("Helvetica-Bold", 9)
+        c.drawString(col_x[0] + 5, y - row_h + 6, "Nom")
+        c.drawString(col_x[1] + 5, y - row_h + 6, "Téléphone")
+        c.drawString(col_x[2] + 5, y - row_h + 6, "Maison actuelle")
+        c.drawString(col_x[3] + 5, y - row_h + 6, f"Loyer ({DEVISE})")
+        return y - row_h
+
+    y = draw_header()
+    c.setFont("Helvetica", 8.5)
+    for idx, (loc, maison_adresse, loyer) in enumerate(rows):
+        if y - row_h < margin + 10 * mm:
+            c.showPage()
+            y = draw_header()
+            c.setFont("Helvetica", 8.5)
+        bg = LIGHT if idx % 2 == 0 else colors.white
+        c.setFillColor(bg)
+        c.setStrokeColor(BORDER)
+        c.rect(margin, y - row_h, width - 2 * margin, row_h, stroke=1, fill=1)
+        c.setFillColor(TEXT_DARK)
+        c.drawString(col_x[0] + 5, y - row_h + 6, (loc.nom or "-")[:32])
+        c.drawString(col_x[1] + 5, y - row_h + 6, loc.telephone or "-")
+        c.drawString(col_x[2] + 5, y - row_h + 6, (maison_adresse or "-")[:24])
+        c.drawRightString(col_x[4] - 5, y - row_h + 6, f"{loyer:,.0f}".replace(",", " ") if loyer else "-")
+        y -= row_h
+
+    c.setFillColor(MUTED)
+    c.setFont("Helvetica", 7.5)
+    c.drawString(margin, margin - 2, f"{len(rows)} locataire(s) — {SOCIETE_NOM}")
 
     c.showPage()
     c.save()
@@ -1331,8 +1737,7 @@ def analyse_ia(stats: dict) -> Optional[str]:
     return None
 
 
-@app.get("/api/bilan/{mois}")
-def bilan_mensuel(mois: str, db: Session = Depends(get_db), _: User = Depends(require_gerant)):
+def calculer_bilan(mois: str, db: Session) -> dict:
     total_maisons = db.query(Maison).count()
     maisons_occupees = db.query(Maison).filter(Maison.statut == "occupee").count()
     taux_occupation = round(maisons_occupees / total_maisons * 100, 1) if total_maisons else 0
@@ -1402,6 +1807,151 @@ def bilan_mensuel(mois: str, db: Session = Depends(get_db), _: User = Depends(re
     stats["genere_le"] = datetime.utcnow().isoformat()
     stats["societe"] = SOCIETE_NOM
     return stats
+
+
+@app.get("/api/bilan/{mois}")
+def bilan_mensuel(mois: str, db: Session = Depends(get_db), _: User = Depends(require_gerant)):
+    return calculer_bilan(mois, db)
+
+
+def generer_bilan_pdf(stats: dict) -> io.BytesIO:
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=A4)
+    width, height = A4
+    margin = 15 * mm
+    header_h = 30 * mm
+
+    c.setStrokeColor(BORDER)
+    c.setLineWidth(1)
+    c.rect(margin - 6, margin - 6, width - 2 * (margin - 6), height - 2 * (margin - 6))
+    c.setFillColor(NAVY)
+    c.rect(0, height - header_h, width, header_h, stroke=0, fill=1)
+    c.setFillColor(GOLD)
+    c.rect(0, height - header_h - 2, width, 2, stroke=0, fill=1)
+    c.setFillColor(colors.white)
+    c.setFont("Helvetica-Bold", 20)
+    c.drawString(margin, height - 14 * mm, stats["societe"])
+    c.setFillColor(GOLD)
+    c.setFont("Helvetica-Oblique", 10)
+    c.drawString(margin, height - 20 * mm, SOCIETE_TAGLINE)
+    c.setFillColor(colors.white)
+    c.setFont("Helvetica-Bold", 14)
+    c.drawRightString(width - margin, height - 14 * mm, f"BILAN MENSUEL — {stats['mois']}")
+    c.setFont("Helvetica", 9)
+    c.drawRightString(width - margin, height - 20 * mm, f"Généré le {date.today().strftime('%d/%m/%Y')}")
+
+    y = height - header_h - 12 * mm
+
+    def ligne_kpi(label, valeur):
+        nonlocal y
+        c.setFillColor(LIGHT)
+        c.setStrokeColor(BORDER)
+        c.rect(margin, y - 8 * mm, width - 2 * margin, 8 * mm, stroke=1, fill=1)
+        c.setFillColor(TEXT_DARK)
+        c.setFont("Helvetica", 9.5)
+        c.drawString(margin + 6, y - 5.5 * mm, label)
+        c.setFont("Helvetica-Bold", 9.5)
+        c.drawRightString(width - margin - 6, y - 5.5 * mm, str(valeur))
+        y -= 8 * mm
+
+    c.setFillColor(NAVY)
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(margin, y, "Indicateurs clés")
+    y -= 10
+    ligne_kpi("Taux d'occupation du parc", f"{stats['taux_occupation']}%")
+    ligne_kpi("Loyers attendus", f"{stats['total_attendu']:,.0f} {DEVISE}".replace(",", " "))
+    ligne_kpi("Loyers encaissés", f"{stats['total_encaisse']:,.0f} {DEVISE}".replace(",", " "))
+    ligne_kpi("Taux d'encaissement", f"{stats['taux_encaissement']}%")
+    ligne_kpi("Nombre d'impayés", str(stats["nombre_impayes"]))
+    ligne_kpi("Dépenses du mois", f"{stats['total_depenses']:,.0f} {DEVISE}".replace(",", " "))
+    ligne_kpi("Résultat net", f"{stats['resultat_net']:,.0f} {DEVISE}".replace(",", " "))
+    ligne_kpi("Tickets de maintenance ouverts", str(stats["tickets_ouverts_periode"]))
+    y -= 6 * mm
+
+    c.setFillColor(NAVY)
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(margin, y, "Analyse")
+    y -= 14
+    c.setFillColor(TEXT_DARK)
+    c.setFont("Helvetica", 9.5)
+    from textwrap import wrap
+    for ligne in wrap(stats.get("analyse") or "", 100):
+        c.drawString(margin, y, ligne)
+        y -= 13
+
+    c.showPage()
+    c.save()
+    buffer.seek(0)
+    return buffer
+
+
+@app.get("/api/bilan/{mois}/pdf")
+def bilan_mensuel_pdf(mois: str, db: Session = Depends(get_db), _: User = Depends(require_gerant)):
+    stats = calculer_bilan(mois, db)
+    buffer = generer_bilan_pdf(stats)
+    return StreamingResponse(
+        buffer,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=bilan_{mois}.pdf"},
+    )
+
+
+@app.get("/api/bilan/{mois}/excel")
+def bilan_mensuel_excel(mois: str, db: Session = Depends(get_db), _: User = Depends(require_gerant)):
+    if Workbook is None:
+        raise HTTPException(500, "Export Excel indisponible (openpyxl non installé).")
+    stats = calculer_bilan(mois, db)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Bilan"
+    header_fill = PatternFill(start_color="12314F", end_color="12314F", fill_type="solid")
+    header_font = Font(color="FFFFFF", bold=True)
+
+    ws.append([f"Bilan mensuel — {stats['societe']} — {stats['mois']}"])
+    ws["A1"].font = Font(bold=True, size=14)
+    ws.append([])
+    ws.append(["Indicateur", "Valeur"])
+    for cell in ws[3]:
+        cell.fill = header_fill
+        cell.font = header_font
+
+    lignes = [
+        ("Taux d'occupation du parc (%)", stats["taux_occupation"]),
+        ("Loyers attendus", stats["total_attendu"]),
+        ("Loyers encaissés", stats["total_encaisse"]),
+        ("Taux d'encaissement (%)", stats["taux_encaissement"]),
+        ("Nombre d'impayés", stats["nombre_impayes"]),
+        ("Dépenses du mois", stats["total_depenses"]),
+        ("Résultat net", stats["resultat_net"]),
+        ("Tickets de maintenance ouverts", stats["tickets_ouverts_periode"]),
+        ("Coût des tickets du mois", stats["cout_tickets_mois"]),
+    ]
+    for label, valeur in lignes:
+        ws.append([label, valeur])
+
+    ws.append([])
+    ws.append(["Dépenses par catégorie"])
+    ws[f"A{ws.max_row}"].font = Font(bold=True)
+    for categorie, montant in stats.get("depenses_par_categorie", {}).items():
+        ws.append([categorie, montant])
+
+    ws.append([])
+    ws.append(["Analyse"])
+    ws[f"A{ws.max_row}"].font = Font(bold=True)
+    ws.append([stats.get("analyse") or ""])
+
+    ws.column_dimensions["A"].width = 36
+    ws.column_dimensions["B"].width = 20
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=bilan_{mois}.xlsx"},
+    )
 
 
 # ---------- Fichiers statiques (frontend) ----------

@@ -31,6 +31,26 @@ Identifiants par défaut (créés automatiquement au premier démarrage) :
 
 Pour changer ces identifiants, définir les variables d'environnement `ADMIN_EMAIL` et `ADMIN_PASSWORD` avant de lancer le serveur.
 
+## Fonctionnalités
+
+- Gestion des maisons, locataires, baux, paiements (encaissements en espèces/mobile money/virement) et tickets de maintenance.
+- Quittance PDF professionnelle avec QR code de vérification après chaque encaissement.
+- Chaque utilisateur peut modifier son nom, son email ou son mot de passe depuis la section Utilisateurs (« Mon profil »).
+- Export PDF de la liste des locataires + impression directe.
+- **Portail locataire en lecture seule** : générez un lien personnel par locataire (bouton « Portail » dans la section Locataires) donnant accès à son bail et son historique de paiements, sans compte ni mot de passe.
+- **Rappels d'impayés** (section « Rappels ») : liste des baux impayés du mois avec lien WhatsApp pré-rempli pour un rappel manuel en un clic, et envoi automatique par email si le locataire a une adresse email et que le SMTP est configuré (voir ci-dessous). Un job quotidien envoie aussi ces rappels automatiquement.
+- **Échéancier mensuel automatique** : bouton « Générer l'échéancier du mois » dans Paiements (crée un paiement « en attente » par bail actif), également généré automatiquement le 1er de chaque mois.
+- **Bilan mensuel** exportable en PDF et en Excel, en plus de l'affichage à l'écran.
+- **Journal de connexion** (section « Journal de connexion », gérant uniquement) : historique des tentatives de connexion (succès/échec, IP, navigateur).
+
+## Envoi d'emails (SMTP)
+
+Par défaut, l'email de réinitialisation de mot de passe est simplement affiché à l'écran (aucun envoi réel), pratique pour le développement. Pour activer l'envoi réel d'emails (réinitialisation de mot de passe + rappels d'impayés), définir ces variables d'environnement :
+
+- `SMTP_HOST`, `SMTP_PORT` (défaut 587), `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` (défaut = `SMTP_USER`), `SMTP_USE_TLS` (défaut `true`)
+
+Tant que `SMTP_HOST`/`SMTP_USER`/`SMTP_PASSWORD` ne sont pas tous renseignés, l'application reste utilisable normalement (liens affichés à l'écran, rappels visibles uniquement via WhatsApp).
+
 ## Créer le dépôt GitHub
 
 ```bash
@@ -51,7 +71,6 @@ git push -u origin main
 
 ## Prochaines étapes possibles
 
-- Portail locataire en lecture seule (consulter son bail, ses paiements).
-- Rappels automatiques des impayés (email/SMS).
-- Génération automatique de l'échéancier mensuel à partir des baux actifs.
-- Mobile money / virement en plus des espèces.
+- Envoi de vrais SMS (intégration d'un fournisseur type Twilio/Orange API) en plus du lien WhatsApp.
+- Notifications push/email au gérant en cas de nouvel impayé.
+- Signature électronique des baux.
