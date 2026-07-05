@@ -314,6 +314,7 @@
     <button data-view="historique" class="not-locataire">🗂️ Historique</button>
     <button data-view="utilisateurs" id="nav-utilisateurs" class="hidden not-locataire">🔑 Utilisateurs</button>
     <button data-view="audit" id="nav-audit" class="hidden not-locataire">🛡️ Journal de connexion</button>
+    <button data-view="mon-profil">👤 Mon profil</button>
   </nav>
 
   <main>
@@ -592,11 +593,11 @@
       </div>
     </section>
 
-    <!-- UTILISATEURS -->
-    <section class="view" id="view-utilisateurs">
-      <div class="page-title"><div class="bar"></div><h2>Utilisateurs</h2></div>
+    <!-- MON PROFIL (tous rôles) -->
+    <section class="view" id="view-mon-profil">
+      <div class="page-title"><div class="bar"></div><h2>Mon profil</h2></div>
       <div class="panel">
-        <div class="panel-header"><strong>Mon profil</strong></div>
+        <div class="panel-header"><strong>Mes informations</strong></div>
         <form id="form-mon-profil" class="form-grid">
           <div><label>Nom</label><input name="nom" id="profil-nom" required></div>
           <div><label>Email</label><input name="email" type="email" id="profil-email" required></div>
@@ -607,6 +608,11 @@
         <div style="font-size:12.5px; color:var(--muted); margin-top:6px;">Le mot de passe actuel n'est requis que si vous modifiez l'email ou le mot de passe. Si vous changez d'email, vous devrez vous reconnecter.</div>
         <div id="profil-msg" style="margin-top:10px;"></div>
       </div>
+    </section>
+
+    <!-- UTILISATEURS -->
+    <section class="view" id="view-utilisateurs">
+      <div class="page-title"><div class="bar"></div><h2>Utilisateurs</h2></div>
       <div class="panel">
         <div class="panel-header"><strong>Créer un compte propriétaire</strong></div>
         <form id="form-user" class="form-grid">
@@ -649,6 +655,17 @@ const API = "/api";
 let TOKEN = localStorage.getItem("gl_token") || null;
 let ME = null;
 let CACHE = { maisons: [], locataires: [], baux: [], paiements: [], tickets: [], users: [], depenses: [], observations: [] };
+
+// ---------- Échappement HTML (contenu saisi par l'utilisateur) ----------
+function escapeHtml(value) {
+  if (value === null || value === undefined) return "";
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
 
 // ---------- Toasts ----------
 function toast(message, type = "info", duration = 4000) {
@@ -850,9 +867,9 @@ async function refreshAll() {
 }
 
 function badge(text) { return `<span class="badge ${text}">${text.replace("_", " ")}</span>`; }
-function maisonAdresse(id) { return CACHE.maisons.find(m => m.id === id)?.adresse || "—"; }
-function locataireNom(id) { return CACHE.locataires.find(l => l.id === id)?.nom || "—"; }
-function proprietaireNom(id) { return CACHE.users.find(u => u.id === id)?.nom || ""; }
+function maisonAdresse(id) { return escapeHtml(CACHE.maisons.find(m => m.id === id)?.adresse || "—"); }
+function locataireNom(id) { return escapeHtml(CACHE.locataires.find(l => l.id === id)?.nom || "—"); }
+function proprietaireNom(id) { return escapeHtml(CACHE.users.find(u => u.id === id)?.nom || ""); }
 
 // ---------- Dashboard ----------
 async function renderDashboard() {
@@ -978,7 +995,7 @@ function annulerEditMaison() {
 function renderMaisons() {
   document.getElementById("maisons-list").innerHTML = CACHE.maisons.map(m => `
     <tr>
-      <td>${m.adresse}</td><td>${m.proprietaire || proprietaireNom(m.proprietaire_id) || "—"}</td><td>${m.nb_pieces}</td>
+      <td>${escapeHtml(m.adresse)}</td><td>${escapeHtml(m.proprietaire) || proprietaireNom(m.proprietaire_id) || "—"}</td><td>${m.nb_pieces}</td>
       <td>${m.loyer_reference}</td><td>${badge(m.statut)}</td>
       <td class="actions-row gerant-only ${ME && ME.role !== 'gerant' ? 'hidden' : ''}">
         <button class="secondary" onclick='editMaison(${JSON.stringify(m).replace(/'/g, "&apos;")})'>Modifier</button>
@@ -1036,7 +1053,7 @@ function renderLocataires() {
   const actifs = CACHE.locataires.filter(l => !l.archive);
   document.getElementById("locataires-list").innerHTML = actifs.map(l => `
     <tr>
-      <td>${l.nom}</td><td>${l.telephone || "—"}</td><td>${l.email || "—"}</td><td>${l.piece_identite || "—"}</td><td>${l.contact_urgence || "—"}</td>
+      <td>${escapeHtml(l.nom)}</td><td>${escapeHtml(l.telephone) || "—"}</td><td>${escapeHtml(l.email) || "—"}</td><td>${escapeHtml(l.piece_identite) || "—"}</td><td>${escapeHtml(l.contact_urgence) || "—"}</td>
       <td class="actions-row gerant-only no-print ${ME && ME.role !== 'gerant' ? 'hidden' : ''}">
         <button class="secondary" onclick='editLocataire(${JSON.stringify(l).replace(/'/g, "&apos;")})'>Modifier</button>
         <button class="secondary" onclick="genererPortailLocataire(${l.id})">Portail</button>
@@ -1201,7 +1218,7 @@ function renderTickets() {
   const isGerant = ME && ME.role === "gerant";
   document.getElementById("tickets-list").innerHTML = CACHE.tickets.map(t => `
     <tr>
-      <td>${maisonAdresse(t.maison_id)}</td><td>${t.description}</td><td>${t.cout}</td><td>${badge(t.statut)}</td>
+      <td>${maisonAdresse(t.maison_id)}</td><td>${escapeHtml(t.description)}</td><td>${t.cout}</td><td>${badge(t.statut)}</td>
       <td class="actions-row">
         ${isGerant && t.statut !== "resolu" ? `<button onclick="avancerTicket(${t.id}, '${t.statut === 'ouvert' ? 'en_cours' : 'resolu'}')">${t.statut === "ouvert" ? "Prendre en charge" : "Marquer résolu"}</button>` : ""}
         ${isGerant ? `<button class="danger" onclick="deleteItem('tickets', ${t.id})">Suppr.</button>` : ""}
@@ -1243,7 +1260,7 @@ function renderUsers() {
   if (!tbody) return;
   tbody.innerHTML = CACHE.users.map(u => `
     <tr>
-      <td>${u.nom}</td><td>${u.email}</td><td>${badge(u.role)}</td>
+      <td>${escapeHtml(u.nom)}</td><td>${escapeHtml(u.email)}</td><td>${badge(u.role)}</td>
       <td class="actions-row">${u.id !== ME.id ? `<button class="danger" onclick="deleteItem('users', ${u.id})">Suppr.</button>` : ""}</td>
     </tr>`).join("") || `<tr><td colspan="4" class="empty-note">Aucun utilisateur</td></tr>`;
 }
@@ -1332,8 +1349,8 @@ function renderDepenses() {
   if (!tbody) return;
   tbody.innerHTML = CACHE.depenses.map(d => `
     <tr>
-      <td>${d.date_depense}</td><td>${CATEGORIE_LABELS[d.categorie] || d.categorie}</td>
-      <td>${d.libelle}</td><td>${d.montant}</td>
+      <td>${d.date_depense}</td><td>${escapeHtml(CATEGORIE_LABELS[d.categorie] || d.categorie)}</td>
+      <td>${escapeHtml(d.libelle)}</td><td>${d.montant}</td>
       <td class="actions-row no-print"><button class="danger" onclick="deleteItem('depenses', ${d.id})">Suppr.</button></td>
     </tr>`).join("") || `<tr><td colspan="5" class="empty-note">Aucune dépense enregistrée</td></tr>`;
 }
@@ -1396,9 +1413,9 @@ function renderObservations() {
     let html = `
       <div class="obs-item ${!o.lu ? 'unread' : ''}">
         <div class="obs-meta">${auteur} · ${maison} · ${date}${!o.lu ? " · <b style='color:var(--gold)'>non lu</b>" : ""}</div>
-        <div class="obs-message">${o.message}</div>`;
+        <div class="obs-message">${escapeHtml(o.message)}</div>`;
     if (o.reponse) {
-      html += `<div class="obs-reponse"><b>Réponse du gérant :</b> ${o.reponse}</div>`;
+      html += `<div class="obs-reponse"><b>Réponse du gérant :</b> ${escapeHtml(o.reponse)}</div>`;
     } else if (isGerant) {
       html += `
         <div class="obs-reply-form">
