@@ -193,6 +193,8 @@
     body * { visibility: hidden; }
     #view-bilan, #view-bilan * { visibility: visible; }
     #view-bilan { position: absolute; left: 0; top: 0; width: 100%; padding: 10px; }
+    body.print-locataires #view-locataires, body.print-locataires #view-locataires * { visibility: visible; }
+    body.print-locataires #view-locataires { display: block !important; position: absolute; left: 0; top: 0; width: 100%; padding: 10px; }
     .no-print { display: none !important; }
   }
 </style>
@@ -327,7 +329,7 @@
     <!-- LOCATAIRES -->
     <section class="view" id="view-locataires">
       <div class="page-title"><div class="bar"></div><h2>Locataires</h2></div>
-      <div class="panel gerant-only">
+      <div class="panel gerant-only no-print">
         <div class="panel-header"><strong id="locataire-form-title">Nouveau locataire</strong></div>
         <form id="form-locataire" class="form-grid">
           <input type="hidden" name="edit_id" id="locataire-edit-id">
@@ -342,8 +344,14 @@
         </form>
       </div>
       <div class="panel">
-        <div class="panel-header"><strong>Liste des locataires</strong></div>
-        <table><thead><tr><th>Nom</th><th>Téléphone</th><th>Pièce ID</th><th>Contact urgence</th><th></th></tr></thead>
+        <div class="panel-header" style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+          <strong>Liste des locataires</strong>
+          <div style="display:flex; gap:8px;">
+            <button type="button" class="secondary" onclick="imprimerLocataires()">🖨️ Imprimer</button>
+            <button type="button" class="secondary" onclick="telechargerLocatairesPdf()">⬇️ Télécharger PDF</button>
+          </div>
+        </div>
+        <table id="table-locataires"><thead><tr><th>Nom</th><th>Téléphone</th><th>Pièce ID</th><th>Contact urgence</th><th class="no-print"></th></tr></thead>
           <tbody id="locataires-list"></tbody>
         </table>
       </div>
@@ -514,6 +522,18 @@
     <section class="view" id="view-utilisateurs">
       <div class="page-title"><div class="bar"></div><h2>Utilisateurs</h2></div>
       <div class="panel">
+        <div class="panel-header"><strong>Mon profil</strong></div>
+        <form id="form-mon-profil" class="form-grid">
+          <div><label>Nom</label><input name="nom" id="profil-nom" required></div>
+          <div><label>Email</label><input name="email" type="email" id="profil-email" required></div>
+          <div><label>Mot de passe actuel</label><input name="current_password" type="password" id="profil-current-password" autocomplete="current-password"></div>
+          <div><label>Nouveau mot de passe (optionnel)</label><input name="new_password" type="password" id="profil-new-password" minlength="4" autocomplete="new-password"></div>
+          <div style="align-self:end"><button type="submit">Enregistrer</button></div>
+        </form>
+        <div style="font-size:12.5px; color:var(--muted); margin-top:6px;">Le mot de passe actuel n'est requis que si vous modifiez l'email ou le mot de passe. Si vous changez d'email, vous devrez vous reconnecter.</div>
+        <div id="profil-msg" style="margin-top:10px;"></div>
+      </div>
+      <div class="panel">
         <div class="panel-header"><strong>Créer un compte propriétaire</strong></div>
         <form id="form-user" class="form-grid">
           <div><label>Nom</label><input name="nom" required></div>
@@ -652,6 +672,11 @@ async function showApp() {
   const roleTag = document.getElementById("user-role");
   roleTag.textContent = ME.role === "gerant" ? "Gérant" : "Propriétaire";
   roleTag.className = "role-tag badge " + ME.role;
+
+  const profilNom = document.getElementById("profil-nom");
+  const profilEmail = document.getElementById("profil-email");
+  if (profilNom) profilNom.value = ME.nom;
+  if (profilEmail) profilEmail.value = ME.email;
 
   const isGerant = ME.role === "gerant";
   document.querySelectorAll(".gerant-only").forEach(el => el.classList.toggle("hidden", !isGerant));
@@ -861,7 +886,7 @@ function renderLocataires() {
   document.getElementById("locataires-list").innerHTML = actifs.map(l => `
     <tr>
       <td>${l.nom}</td><td>${l.telephone || "—"}</td><td>${l.piece_identite || "—"}</td><td>${l.contact_urgence || "—"}</td>
-      <td class="actions-row gerant-only ${ME && ME.role !== 'gerant' ? 'hidden' : ''}">
+      <td class="actions-row gerant-only no-print ${ME && ME.role !== 'gerant' ? 'hidden' : ''}">
         <button class="secondary" onclick='editLocataire(${JSON.stringify(l).replace(/'/g, "&apos;")})'>Modifier</button>
         <button class="danger" onclick="deleteItem('locataires', ${l.id})">Suppr.</button>
       </td>
@@ -1033,6 +1058,75 @@ function renderUsers() {
       <td>${u.nom}</td><td>${u.email}</td><td>${badge(u.role)}</td>
       <td class="actions-row">${u.id !== ME.id ? `<button class="danger" onclick="deleteItem('users', ${u.id})">Suppr.</button>` : ""}</td>
     </tr>`).join("") || `<tr><td colspan="4" class="empty-note">Aucun utilisateur</td></tr>`;
+}
+
+// ---------- Mon profil ----------
+const monProfilForm = document.getElementById("form-mon-profil");
+if (monProfilForm) {
+  monProfilForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    const msgBox = document.getElementById("profil-msg");
+    msgBox.innerHTML = "";
+    const nom = f.get("nom").trim();
+    const email = f.get("email").trim();
+    const currentPassword = f.get("current_password");
+    const newPassword = f.get("new_password");
+    const emailChanged = email !== ME.email;
+
+    if ((newPassword || emailChanged) && !currentPassword) {
+      msgBox.innerHTML = `<div class="error">Mot de passe actuel requis pour modifier l'email ou le mot de passe.</div>`;
+      return;
+    }
+    try {
+      const payload = { nom };
+      if (emailChanged) payload.email = email;
+      if (newPassword) payload.new_password = newPassword;
+      if (currentPassword) payload.current_password = currentPassword;
+      const updated = await apiFetch("/auth/me", { method: "PUT", body: JSON.stringify(payload) });
+      document.getElementById("profil-current-password").value = "";
+      document.getElementById("profil-new-password").value = "";
+      if (emailChanged) {
+        alert("Email modifié avec succès. Merci de vous reconnecter avec votre nouvel email.");
+        logout();
+        return;
+      }
+      ME = updated;
+      document.getElementById("user-nom").textContent = ME.nom;
+      msgBox.innerHTML = `<div style="background:#dcfce7; color:var(--ok, #16a34a); padding:8px 10px; border-radius:8px; font-size:13px;">✓ Profil mis à jour avec succès.</div>`;
+    } catch (err) {
+      msgBox.innerHTML = `<div class="error">${err.message}</div>`;
+    }
+  });
+}
+
+// ---------- Impression / export PDF des locataires ----------
+function imprimerLocataires() {
+  document.body.classList.add("print-locataires");
+  const cleanup = () => {
+    document.body.classList.remove("print-locataires");
+    window.removeEventListener("afterprint", cleanup);
+  };
+  window.addEventListener("afterprint", cleanup);
+  window.print();
+}
+
+async function telechargerLocatairesPdf() {
+  try {
+    const res = await fetch(API + "/locataires/export/pdf", { headers: authHeaders() });
+    if (!res.ok) throw new Error("Erreur lors de la génération du PDF.");
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "liste_locataires.pdf";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    alert(err.message);
+  }
 }
 
 // ---------- Dépenses ----------

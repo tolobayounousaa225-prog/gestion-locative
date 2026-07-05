@@ -236,6 +236,13 @@ class UserOut(BaseModel):
     role: str
 
 
+class UpdateMeIn(BaseModel):
+    nom: Optional[str] = None
+    email: Optional[str] = None
+    current_password: Optional[str] = None
+    new_password: Optional[str] = None
+
+
 class ForgotPasswordIn(BaseModel):
     email: str
 
@@ -457,6 +464,34 @@ def me(current_user: User = Depends(get_current_user)):
     return {"id": current_user.id, "nom": current_user.nom, "email": current_user.email, "role": current_user.role}
 
 
+@app.put("/api/auth/me")
+def update_me(data: UpdateMeIn, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    wants_password_change = bool(data.new_password)
+    wants_email_change = bool(data.email) and data.email != current_user.email
+
+    if (wants_password_change or wants_email_change) and not data.current_password:
+        raise HTTPException(400, "Mot de passe actuel requis pour modifier l'email ou le mot de passe.")
+    if (wants_password_change or wants_email_change) and not verify_password(data.current_password, current_user.mot_de_passe_hash):
+        raise HTTPException(400, "Mot de passe actuel incorrect.")
+
+    if wants_email_change:
+        if db.query(User).filter(User.email == data.email, User.id != current_user.id).first():
+            raise HTTPException(400, "Cet email est déjà utilisé.")
+        current_user.email = data.email
+
+    if data.nom:
+        current_user.nom = data.nom
+
+    if wants_password_change:
+        if len(data.new_password) < 4:
+            raise HTTPException(400, "Le mot de passe doit contenir au moins 4 caractères.")
+        current_user.mot_de_passe_hash = pwd_context.hash(data.new_password)
+
+    db.commit()
+    db.refresh(current_user)
+    return {"id": current_user.id, "nom": current_user.nom, "email": current_user.email, "role": current_user.role}
+
+
 # ---------- Mot de passe oublié (auto-service) ----------
 @app.post("/api/auth/forgot-password")
 def forgot_password(data: ForgotPasswordIn, request: Request, db: Session = Depends(get_db)):
@@ -588,6 +623,30 @@ def list_locataires(db: Session = Depends(get_db), current_user: User = Depends(
         locataire_ids = {b.locataire_id for b in db.query(Bail).filter(Bail.maison_id.in_(maison_ids)).all()}
         return db.query(Locataire).filter(Locataire.id.in_(locataire_ids)).all()
     return db.query(Locataire).all()
+
+
+@app.get("/api/locataires/export/pdf")
+def export_locataires_pdf(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    if current_user.role == "proprietaire":
+        maison_ids = owned_maison_ids(db, current_user)
+        locataire_ids = {b.locataire_id for b in db.query(Bail).filter(Bail.maison_id.in_(maison_ids)).all()}
+        locataires = db.query(Locataire).filter(Locataire.id.in_(locataire_ids)).order_by(Locataire.nom).all()
+    else:
+        locataires = db.query(Locataire).filter(Locataire.archive == False).order_by(Locataire.nom).all()
+
+    rows = []
+    for loc in locataires:
+        bail_actif = next((b for b in loc.baux if b.statut == "actif"), None)
+        maison_adresse = bail_actif.maison.adresse if bail_actif else None
+        loyer = bail_actif.loyer_mensuel if bail_actif else None
+        rows.append((loc, maison_adresse, loyer))
+
+    buffer = generer_liste_locataires_pdf(rows)
+    return StreamingResponse(
+        buffer,
+        media_type="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=liste_locataires.pdf"},
+    )
 
 
 @app.post("/api/locataires", response_model=LocataireOut)
@@ -959,6 +1018,75 @@ def generer_quittance_pdf(paiement, bail, maison, locataire, verify_url: str = "
             c.drawString(qr_x, qr_y - 17, "l'authenticité du document")
         except Exception:
             pass
+
+    c.showPage()
+    c.save()
+    buffer.seek(0)
+    return buffer
+
+
+def generer_liste_locataires_pdf(rows) -> io.BytesIO:
+    """rows : liste de tuples (locataire, maison_adresse, loyer_mensuel_ou_None)."""
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=A4)
+    width, height = A4
+    margin = 15 * mm
+    col_x = [margin, margin + 55 * mm, margin + 90 * mm, margin + 125 * mm, width - margin]
+    row_h = 8 * mm
+    header_h = 26 * mm
+
+    def draw_header(page_titre_suffixe=""):
+        c.setStrokeColor(BORDER)
+        c.setLineWidth(1)
+        c.rect(margin - 6, margin - 6, width - 2 * (margin - 6), height - 2 * (margin - 6))
+        c.setFillColor(NAVY)
+        c.rect(0, height - header_h, width, header_h, stroke=0, fill=1)
+        c.setFillColor(GOLD)
+        c.rect(0, height - header_h - 2, width, 2, stroke=0, fill=1)
+        c.setFillColor(colors.white)
+        c.setFont("Helvetica-Bold", 18)
+        c.drawString(margin, height - 13 * mm, SOCIETE_NOM)
+        c.setFillColor(GOLD)
+        c.setFont("Helvetica-Oblique", 9)
+        c.drawString(margin, height - 19 * mm, SOCIETE_TAGLINE)
+        c.setFillColor(colors.white)
+        c.setFont("Helvetica-Bold", 13)
+        c.drawRightString(width - margin, height - 13 * mm, "LISTE DES LOCATAIRES")
+        c.setFont("Helvetica", 8.5)
+        c.drawRightString(width - margin, height - 19 * mm, f"Généré le {date.today().strftime('%d/%m/%Y')}{page_titre_suffixe}")
+
+        y = height - header_h - 8 * mm
+        c.setFillColor(NAVY)
+        c.rect(margin, y - row_h, width - 2 * margin, row_h, stroke=0, fill=1)
+        c.setFillColor(colors.white)
+        c.setFont("Helvetica-Bold", 9)
+        c.drawString(col_x[0] + 5, y - row_h + 6, "Nom")
+        c.drawString(col_x[1] + 5, y - row_h + 6, "Téléphone")
+        c.drawString(col_x[2] + 5, y - row_h + 6, "Maison actuelle")
+        c.drawString(col_x[3] + 5, y - row_h + 6, f"Loyer ({DEVISE})")
+        return y - row_h
+
+    y = draw_header()
+    c.setFont("Helvetica", 8.5)
+    for idx, (loc, maison_adresse, loyer) in enumerate(rows):
+        if y - row_h < margin + 10 * mm:
+            c.showPage()
+            y = draw_header()
+            c.setFont("Helvetica", 8.5)
+        bg = LIGHT if idx % 2 == 0 else colors.white
+        c.setFillColor(bg)
+        c.setStrokeColor(BORDER)
+        c.rect(margin, y - row_h, width - 2 * margin, row_h, stroke=1, fill=1)
+        c.setFillColor(TEXT_DARK)
+        c.drawString(col_x[0] + 5, y - row_h + 6, (loc.nom or "-")[:32])
+        c.drawString(col_x[1] + 5, y - row_h + 6, loc.telephone or "-")
+        c.drawString(col_x[2] + 5, y - row_h + 6, (maison_adresse or "-")[:24])
+        c.drawRightString(col_x[4] - 5, y - row_h + 6, f"{loyer:,.0f}".replace(",", " ") if loyer else "-")
+        y -= row_h
+
+    c.setFillColor(MUTED)
+    c.setFont("Helvetica", 7.5)
+    c.drawString(margin, margin - 2, f"{len(rows)} locataire(s) — {SOCIETE_NOM}")
 
     c.showPage()
     c.save()
