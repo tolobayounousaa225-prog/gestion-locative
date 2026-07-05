@@ -1434,6 +1434,86 @@ def generer_liste_locataires_pdf(rows) -> io.BytesIO:
     return buffer
 
 
+def generer_depenses_pdf(depenses) -> io.BytesIO:
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=A4)
+    width, height = A4
+    margin = 15 * mm
+    col_x = [margin, margin + 30 * mm, margin + 85 * mm, width - margin]
+    row_h = 8 * mm
+    header_h = 26 * mm
+    total = sum(d.montant for d in depenses)
+
+    def draw_header():
+        c.setStrokeColor(BORDER)
+        c.setLineWidth(1)
+        c.rect(margin - 6, margin - 6, width - 2 * (margin - 6), height - 2 * (margin - 6))
+        c.setFillColor(NAVY)
+        c.rect(0, height - header_h, width, header_h, stroke=0, fill=1)
+        c.setFillColor(GOLD)
+        c.rect(0, height - header_h - 2, width, 2, stroke=0, fill=1)
+        c.setFillColor(colors.white)
+        c.setFont("Helvetica-Bold", 18)
+        c.drawString(margin, height - 13 * mm, SOCIETE_NOM)
+        c.setFillColor(GOLD)
+        c.setFont("Helvetica-Oblique", 9)
+        c.drawString(margin, height - 19 * mm, SOCIETE_TAGLINE)
+        c.setFillColor(colors.white)
+        c.setFont("Helvetica-Bold", 13)
+        c.drawRightString(width - margin, height - 13 * mm, "HISTORIQUE DES DÉPENSES")
+        c.setFont("Helvetica", 8.5)
+        c.drawRightString(width - margin, height - 19 * mm, f"Généré le {date.today().strftime('%d/%m/%Y')}")
+
+        y = height - header_h - 8 * mm
+        c.setFillColor(NAVY)
+        c.rect(margin, y - row_h, width - 2 * margin, row_h, stroke=0, fill=1)
+        c.setFillColor(colors.white)
+        c.setFont("Helvetica-Bold", 9)
+        c.drawString(col_x[0] + 5, y - row_h + 6, "Date")
+        c.drawString(col_x[1] + 5, y - row_h + 6, "Catégorie")
+        c.drawString(col_x[2] + 5, y - row_h + 6, "Libellé")
+        c.drawRightString(col_x[3] - 5, y - row_h + 6, f"Montant ({DEVISE})")
+        return y - row_h
+
+    y = draw_header()
+    c.setFont("Helvetica", 8.5)
+    for idx, d in enumerate(depenses):
+        if y - row_h < margin + 14 * mm:
+            c.showPage()
+            y = draw_header()
+            c.setFont("Helvetica", 8.5)
+        bg = LIGHT if idx % 2 == 0 else colors.white
+        c.setFillColor(bg)
+        c.setStrokeColor(BORDER)
+        c.rect(margin, y - row_h, width - 2 * margin, row_h, stroke=1, fill=1)
+        c.setFillColor(TEXT_DARK)
+        c.drawString(col_x[0] + 5, y - row_h + 6, str(d.date_depense))
+        c.drawString(col_x[1] + 5, y - row_h + 6, CATEGORIE_LABELS.get(d.categorie, d.categorie))
+        c.drawString(col_x[2] + 5, y - row_h + 6, (d.libelle or "-")[:38])
+        c.drawRightString(col_x[3] - 5, y - row_h + 6, f"{d.montant:,.0f}".replace(",", " "))
+        y -= row_h
+
+    if y - row_h < margin + 14 * mm:
+        c.showPage()
+        y = draw_header()
+
+    c.setFillColor(NAVY)
+    c.rect(margin, y - row_h, width - 2 * margin, row_h, stroke=0, fill=1)
+    c.setFillColor(colors.white)
+    c.setFont("Helvetica-Bold", 9.5)
+    c.drawString(col_x[0] + 5, y - row_h + 6, "TOTAL")
+    c.drawRightString(col_x[3] - 5, y - row_h + 6, f"{total:,.0f} {DEVISE}".replace(",", " "))
+
+    c.setFillColor(MUTED)
+    c.setFont("Helvetica", 7.5)
+    c.drawString(margin, margin - 2, f"{len(depenses)} dépense(s) — {SOCIETE_NOM}")
+
+    c.showPage()
+    c.save()
+    buffer.seek(0)
+    return buffer
+
+
 @app.get("/api/paiements/{paiement_id}/quittance")
 def quittance_pdf(paiement_id: int, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     paiement = db.query(Paiement).get(paiement_id)
@@ -1539,10 +1619,30 @@ def delete_ticket(ticket_id: int, db: Session = Depends(get_db), _: User = Depen
     return {"ok": True}
 
 
+CATEGORIE_LABELS = {
+    "salaire_gerant": "Salaire du gérant",
+    "entretien": "Entretien / réparations",
+    "taxes": "Taxes / impôts",
+    "transport": "Transport",
+    "autre": "Autre",
+}
+
+
 # ---------- Dépenses (gérant uniquement) ----------
 @app.get("/api/depenses", response_model=List[DepenseOut])
 def list_depenses(db: Session = Depends(get_db), _: User = Depends(require_gerant)):
     return db.query(Depense).order_by(Depense.date_depense.desc()).all()
+
+
+@app.get("/api/depenses/export/pdf")
+def export_depenses_pdf(db: Session = Depends(get_db), _: User = Depends(require_gerant)):
+    depenses = db.query(Depense).order_by(Depense.date_depense.desc()).all()
+    buffer = generer_depenses_pdf(depenses)
+    return StreamingResponse(
+        buffer,
+        media_type="application/pdf",
+        headers={"Content-Disposition": "attachment; filename=historique_depenses.pdf"},
+    )
 
 
 @app.post("/api/depenses", response_model=DepenseOut)
