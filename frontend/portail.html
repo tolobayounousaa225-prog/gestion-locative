@@ -53,6 +53,15 @@
   </div>
 
 <script>
+function escapeHtml(value) {
+  if (value === null || value === undefined) return "";
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
 function badge(text) { return `<span class="badge ${text}">${(text || "").replace("_", " ")}</span>`; }
 
 async function charger() {
@@ -70,7 +79,7 @@ async function charger() {
       return;
     }
     const data = await res.json();
-    let html = `<h1>Bonjour ${data.locataire.nom}</h1><div class="muted">Voici un récapitulatif de votre/vos bail/baux et paiements — ${data.societe}.</div>`;
+    let html = `<h1>Bonjour ${escapeHtml(data.locataire.nom)}</h1><div class="muted">Voici un récapitulatif de votre/vos bail/baux et paiements — ${escapeHtml(data.societe)}.</div>`;
     if (!data.baux.length) {
       html += `<div class="muted" style="margin-top:16px;">Aucun bail associé pour le moment.</div>`;
     }
@@ -80,7 +89,7 @@ async function charger() {
       const card = document.createElement("div");
       card.className = "card";
       card.innerHTML = `
-        <h2>${b.maison_adresse} ${badge(b.statut)}</h2>
+        <h2>${escapeHtml(b.maison_adresse)} ${badge(b.statut)}</h2>
         <div class="muted">Du ${b.date_debut} ${b.date_fin ? "au " + b.date_fin : "(en cours)"} · Loyer mensuel : ${b.loyer_mensuel} · Caution : ${b.caution}</div>
         <table>
           <thead><tr><th>Mois</th><th>Montant</th><th>Statut</th><th>Date de paiement</th></tr></thead>

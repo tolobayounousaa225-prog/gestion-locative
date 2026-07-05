@@ -29,7 +29,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
-from sqlalchemy import Boolean, Column, Date as SADate, DateTime, Float, ForeignKey, Integer, String, create_engine
+from sqlalchemy import Boolean, Column, Date as SADate, DateTime, Float, ForeignKey, Integer, String, create_engine, func
 from sqlalchemy.orm import Session, declarative_base, relationship, sessionmaker
 from sqlalchemy.exc import IntegrityError
 
@@ -430,6 +430,10 @@ def verify_password(plain: str, hashed: str) -> bool:
     return pwd_context.verify(plain, hashed)
 
 
+def normalize_email(email: str) -> str:
+    return email.strip().lower()
+
+
 def create_access_token(data: dict) -> str:
     to_encode = data.copy()
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -492,10 +496,11 @@ def mois_precedent(mois: str) -> str:
 def ensure_default_admin():
     db = SessionLocal()
     try:
-        if not db.query(User).filter(User.email == ADMIN_EMAIL).first():
+        admin_email = normalize_email(ADMIN_EMAIL)
+        if not db.query(User).filter(func.lower(User.email) == admin_email).first():
             admin = User(
                 nom=ADMIN_NOM,
-                email=ADMIN_EMAIL,
+                email=admin_email,
                 mot_de_passe_hash=pwd_context.hash(ADMIN_PASSWORD),
                 role="gerant",
             )
@@ -606,10 +611,16 @@ def job_generation_echeancier_mensuel() -> None:
 
 scheduler = None
 if BackgroundScheduler is not None:
-    scheduler = BackgroundScheduler(timezone="UTC")
-    scheduler.add_job(verifier_et_envoyer_rappels_impayes, "cron", hour=8, id="rappels_impayes", replace_existing=True)
-    scheduler.add_job(job_generation_echeancier_mensuel, "cron", day=1, hour=1, id="echeancier_mensuel", replace_existing=True)
-    scheduler.start()
+    try:
+        scheduler = BackgroundScheduler(timezone="UTC")
+        scheduler.add_job(verifier_et_envoyer_rappels_impayes, "cron", hour=8, id="rappels_impayes", replace_existing=True)
+        scheduler.add_job(job_generation_echeancier_mensuel, "cron", day=1, hour=1, id="echeancier_mensuel", replace_existing=True)
+        scheduler.start()
+    except Exception:
+        # Les rappels automatiques et la génération d'échéancier planifiée sont des fonctionnalités
+        # secondaires : un échec de démarrage du planificateur ne doit jamais empêcher l'API de démarrer.
+        logger.exception("Échec du démarrage du planificateur de tâches (rappels/échéancier automatiques désactivés).")
+        scheduler = None
 
 
 # ---------------------------------------------------------------------------
@@ -620,7 +631,10 @@ app = FastAPI(title="Gestion Locative — TOURÉ IMMOBILIER")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    # allow_credentials=False : l'authentification se fait par jeton Bearer (pas de cookies),
+    # donc les credentials cross-origin ne sont pas nécessaires. Combiner allow_origins="*"
+    # avec allow_credentials=True est une configuration invalide/dangereuse à éviter.
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -630,7 +644,17 @@ ensure_default_admin()
 
 @app.post("/api/auth/login", response_model=Token)
 def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == form_data.username).first()
+    email_normalise = normalize_email(form_data.username)
+    depuis = datetime.utcnow() - timedelta(minutes=15)
+    echecs_recents = db.query(LoginLog).filter(
+        func.lower(LoginLog.email) == email_normalise,
+        LoginLog.succes == False,
+        LoginLog.date_creation >= depuis,
+    ).count()
+    if echecs_recents >= 5:
+        raise HTTPException(status_code=429, detail="Trop de tentatives échouées. Réessayez dans quelques minutes.")
+
+    user = db.query(User).filter(func.lower(User.email) == email_normalise).first()
     succes = bool(user and verify_password(form_data.password, user.mot_de_passe_hash))
     db.add(LoginLog(
         email=form_data.username,
@@ -652,8 +676,9 @@ def me(current_user: User = Depends(get_current_user)):
 
 @app.put("/api/auth/me")
 def update_me(data: UpdateMeIn, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    new_email = normalize_email(data.email) if data.email else None
     wants_password_change = bool(data.new_password)
-    wants_email_change = bool(data.email) and data.email != current_user.email
+    wants_email_change = bool(new_email) and new_email != current_user.email.lower()
 
     if (wants_password_change or wants_email_change) and not data.current_password:
         raise HTTPException(400, "Mot de passe actuel requis pour modifier l'email ou le mot de passe.")
@@ -661,9 +686,9 @@ def update_me(data: UpdateMeIn, db: Session = Depends(get_db), current_user: Use
         raise HTTPException(400, "Mot de passe actuel incorrect.")
 
     if wants_email_change:
-        if db.query(User).filter(User.email == data.email, User.id != current_user.id).first():
+        if db.query(User).filter(func.lower(User.email) == new_email, User.id != current_user.id).first():
             raise HTTPException(400, "Cet email est déjà utilisé.")
-        current_user.email = data.email
+        current_user.email = new_email
 
     if data.nom:
         current_user.nom = data.nom
@@ -681,7 +706,7 @@ def update_me(data: UpdateMeIn, db: Session = Depends(get_db), current_user: Use
 # ---------- Mot de passe oublié (auto-service) ----------
 @app.post("/api/auth/forgot-password")
 def forgot_password(data: ForgotPasswordIn, request: Request, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == data.email).first()
+    user = db.query(User).filter(func.lower(User.email) == normalize_email(data.email)).first()
     if not user:
         raise HTTPException(404, "Aucun compte trouvé avec cet email.")
     token = secrets.token_urlsafe(32)
@@ -729,13 +754,16 @@ def list_users(db: Session = Depends(get_db), _: User = Depends(require_gerant))
 
 @app.post("/api/users", response_model=UserOut)
 def create_user(data: UserIn, db: Session = Depends(get_db), _: User = Depends(require_gerant)):
-    if db.query(User).filter(User.email == data.email).first():
+    email = normalize_email(data.email)
+    if db.query(User).filter(func.lower(User.email) == email).first():
         raise HTTPException(400, "Cet email est déjà utilisé")
     if data.role not in ("gerant", "proprietaire"):
         raise HTTPException(400, "Rôle invalide")
+    if len(data.password) < 4:
+        raise HTTPException(400, "Le mot de passe doit contenir au moins 4 caractères.")
     user = User(
         nom=data.nom,
-        email=data.email,
+        email=email,
         mot_de_passe_hash=pwd_context.hash(data.password),
         role=data.role,
     )
@@ -838,6 +866,8 @@ def export_locataires_pdf(db: Session = Depends(get_db), current_user: User = De
         maison_ids = owned_maison_ids(db, current_user)
         locataire_ids = {b.locataire_id for b in db.query(Bail).filter(Bail.maison_id.in_(maison_ids)).all()}
         locataires = db.query(Locataire).filter(Locataire.id.in_(locataire_ids)).order_by(Locataire.nom).all()
+    elif current_user.role == "locataire":
+        locataires = db.query(Locataire).filter(Locataire.id == current_user.locataire_id).all()
     else:
         locataires = db.query(Locataire).filter(Locataire.archive == False).order_by(Locataire.nom).all()
 
@@ -872,6 +902,9 @@ def update_locataire(locataire_id: int, data: LocataireIn, db: Session = Depends
         raise HTTPException(404, "Locataire introuvable")
     for k, v in data.model_dump().items():
         setattr(locataire, k, v)
+    compte = db.query(User).filter(User.locataire_id == locataire_id).first()
+    if compte:
+        compte.nom = data.nom
     db.commit()
     db.refresh(locataire)
     return locataire
@@ -889,6 +922,9 @@ def delete_locataire(locataire_id: int, db: Session = Depends(get_db), _: User =
         locataire.archive = True
         db.commit()
         return {"ok": True, "archive": True}
+    compte = db.query(User).filter(User.locataire_id == locataire_id).first()
+    if compte:
+        db.delete(compte)
     try:
         db.delete(locataire)
         db.commit()
@@ -921,19 +957,20 @@ def creer_acces_locataire(locataire_id: int, data: LocataireCompteIn, db: Sessio
     if len(data.password) < 4:
         raise HTTPException(400, "Le mot de passe doit contenir au moins 4 caractères.")
 
+    email = normalize_email(data.email)
     compte = db.query(User).filter(User.locataire_id == locataire_id).first()
-    email_deja_pris = db.query(User).filter(User.email == data.email, User.id != (compte.id if compte else -1)).first()
+    email_deja_pris = db.query(User).filter(func.lower(User.email) == email, User.id != (compte.id if compte else -1)).first()
     if email_deja_pris:
         raise HTTPException(400, "Cet email est déjà utilisé par un autre compte.")
 
     if compte:
-        compte.email = data.email
+        compte.email = email
         compte.mot_de_passe_hash = pwd_context.hash(data.password)
         compte.nom = locataire.nom
     else:
         compte = User(
             nom=locataire.nom,
-            email=data.email,
+            email=email,
             mot_de_passe_hash=pwd_context.hash(data.password),
             role="locataire",
             locataire_id=locataire_id,

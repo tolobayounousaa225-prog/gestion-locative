@@ -45,6 +45,16 @@
   </div>
 
 <script>
+function escapeHtml(value) {
+  if (value === null || value === undefined) return "";
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 async function verifier() {
   const params = new URLSearchParams(window.location.search);
   const code = params.get("code");
@@ -65,13 +75,13 @@ async function verifier() {
     content.innerHTML = `
       <div class="status valide"><span class="icon">✓</span> Quittance authentique</div>
       <table>
-        <tr><td>N° de quittance</td><td>#${data.quittance_id}</td></tr>
-        <tr><td>Locataire</td><td>${data.locataire}</td></tr>
-        <tr><td>Bien loué</td><td>${data.maison}</td></tr>
-        <tr><td>Mois concerné</td><td>${data.mois_concerne}</td></tr>
-        <tr><td>Montant</td><td>${data.montant} ${data.devise}</td></tr>
-        <tr><td>Mode de paiement</td><td>${data.mode}</td></tr>
-        <tr><td>Statut</td><td>${data.statut}</td></tr>
+        <tr><td>N° de quittance</td><td>#${escapeHtml(data.quittance_id)}</td></tr>
+        <tr><td>Locataire</td><td>${escapeHtml(data.locataire)}</td></tr>
+        <tr><td>Bien loué</td><td>${escapeHtml(data.maison)}</td></tr>
+        <tr><td>Mois concerné</td><td>${escapeHtml(data.mois_concerne)}</td></tr>
+        <tr><td>Montant</td><td>${escapeHtml(data.montant)} ${escapeHtml(data.devise)}</td></tr>
+        <tr><td>Mode de paiement</td><td>${escapeHtml(data.mode)}</td></tr>
+        <tr><td>Statut</td><td>${escapeHtml(data.statut)}</td></tr>
       </table>
       <div class="footer-note">Ce document a été émis par ${data.societe} et son authenticité est confirmée.</div>`;
   } catch (err) {
