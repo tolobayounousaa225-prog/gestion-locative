@@ -662,7 +662,7 @@
       </div>
       <div class="panel">
         <div class="panel-header"><strong>Comptes existants</strong></div>
-        <table><thead><tr><th>Nom</th><th>Email</th><th>Rôle</th><th></th></tr></thead>
+        <table><thead><tr><th>Nom</th><th>Email</th><th>Rôle</th><th>Maisons rattachées</th><th></th></tr></thead>
           <tbody id="users-list"></tbody>
         </table>
       </div>
@@ -1340,14 +1340,29 @@ function annulerEditionUser() {
 function renderUsers() {
   const tbody = document.getElementById("users-list");
   if (!tbody) return;
-  tbody.innerHTML = CACHE.users.map(u => `
+  tbody.innerHTML = CACHE.users.map(u => {
+    let colonneMaisons = "";
+    if (u.role === "proprietaire") {
+      const sesMaisons = CACHE.maisons.filter(m => m.proprietaire_id === u.id);
+      if (sesMaisons.length) {
+        colonneMaisons = `<strong>${sesMaisons.length}</strong> — ` +
+          sesMaisons.map(m => m.adresse).join(", ");
+      } else {
+        colonneMaisons = `<span class="muted">Aucune maison rattachée</span>`;
+      }
+    } else {
+      colonneMaisons = `<span class="muted">—</span>`;
+    }
+    return `
     <tr>
       <td>${u.nom}</td><td>${u.email}</td><td>${badge(u.role)}</td>
+      <td>${colonneMaisons}</td>
       <td class="actions-row">
         <button class="secondary" onclick='editUser(${JSON.stringify(u).replace(/'/g, "&apos;")})'>Modifier</button>
         ${u.id !== ME.id ? `<button class="danger" onclick="deleteItem('users', ${u.id})">Suppr.</button>` : ""}
       </td>
-    </tr>`).join("") || `<tr><td colspan="4" class="empty-note">Aucun utilisateur</td></tr>`;
+    </tr>`;
+  }).join("") || `<tr><td colspan="5" class="empty-note">Aucun utilisateur</td></tr>`;
 }
 
 // ---------- Dépenses ----------
