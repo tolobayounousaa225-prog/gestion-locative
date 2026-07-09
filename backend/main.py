@@ -270,24 +270,61 @@ except Exception:
     pass
 
 
+def _cle_adresse(txt: str) -> str:
+    """Normalise une adresse pour comparaison : minuscules, sans accents, espaces/ponctuation réduits."""
+    import unicodedata
+    s = (txt or "").strip().lower()
+    s = "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
+    # Remplace toute ponctuation par des espaces, puis compacte les espaces
+    s = "".join(c if c.isalnum() else " " for c in s)
+    return " ".join(s.split())
+
+
+def fusionner_batiments_doublons():
+    """Fusionne les bâtiments dont le nom OU l'adresse normalisée sont identiques :
+    on garde le plus ancien, on y rattache tous les logements, on supprime les doublons."""
+    db = SessionLocal()
+    try:
+        batiments = db.query(Batiment).order_by(Batiment.id).all()
+        if len(batiments) < 2:
+            return
+        garde_par_cle = {}
+        for b in batiments:
+            cle = _cle_adresse(b.nom) + "||" + _cle_adresse(b.adresse)
+            if cle in garde_par_cle:
+                principal = garde_par_cle[cle]
+                # Rattache les logements du doublon au bâtiment principal
+                db.query(Maison).filter(Maison.batiment_id == b.id).update({"batiment_id": principal.id})
+                db.delete(b)
+            else:
+                garde_par_cle[cle] = b
+        db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+
+
 def migrer_maisons_vers_batiments():
     """Regroupe les maisons existantes sans bâtiment sous des bâtiments créés à partir
-    de leur adresse. Les maisons de même adresse (insensible casse/espaces) sont
+    de leur adresse. Les maisons de même adresse (insensible casse/accents/espaces) sont
     rassemblées sous un même bâtiment. Idempotent : ne touche pas aux maisons déjà rattachées."""
     db = SessionLocal()
     try:
         orphelines = db.query(Maison).filter(Maison.batiment_id.is_(None)).all()
         if not orphelines:
             return
-        # Regrouper par clé d'adresse normalisée
+        # Index des bâtiments existants par clé normalisée (pour réutilisation robuste)
+        existants = {}
+        for b in db.query(Batiment).all():
+            existants[_cle_adresse(b.adresse)] = b
+        # Regrouper les orphelines par clé d'adresse normalisée
         groupes = {}
         for m in orphelines:
-            cle = " ".join((m.adresse or "").strip().lower().split())
-            groupes.setdefault(cle, []).append(m)
+            groupes.setdefault(_cle_adresse(m.adresse), []).append(m)
         for cle, maisons in groupes.items():
             ref = maisons[0]
-            # Réutilise un bâtiment existant à la même adresse si présent
-            batiment = db.query(Batiment).filter(Batiment.adresse == ref.adresse).first()
+            batiment = existants.get(cle)
             if not batiment:
                 batiment = Batiment(
                     nom=ref.adresse,
@@ -297,9 +334,9 @@ def migrer_maisons_vers_batiments():
                 )
                 db.add(batiment)
                 db.flush()
+                existants[cle] = batiment
             for m in maisons:
                 m.batiment_id = batiment.id
-                # Hérite du propriétaire du bâtiment si défini
                 if batiment.proprietaire_id and not m.proprietaire_id:
                     m.proprietaire_id = batiment.proprietaire_id
                     m.proprietaire = batiment.proprietaire
@@ -607,6 +644,7 @@ app.add_middleware(
 
 ensure_default_admin()
 migrer_maisons_vers_batiments()
+fusionner_batiments_doublons()
 
 
 @app.post("/api/auth/login", response_model=Token)
