@@ -1586,6 +1586,218 @@ def finances_export(annee: int = None, type: str = "paiements", db: Session = De
     )
 
 
+# ---------- Automatisation : impayés, échéancier, contrats ----------
+def _telephone_wa(tel: Optional[str]) -> Optional[str]:
+    """Nettoie un numéro pour un lien wa.me (Côte d'Ivoire : préfixe 225 par défaut)."""
+    if not tel:
+        return None
+    chiffres = "".join(c for c in tel if c.isdigit())
+    if not chiffres:
+        return None
+    if chiffres.startswith("00"):
+        chiffres = chiffres[2:]
+    if not chiffres.startswith("225") and len(chiffres) <= 10:
+        chiffres = "225" + chiffres
+    return chiffres
+
+
+@app.get("/api/impayes")
+def liste_impayes(mois: str = None, db: Session = Depends(get_db), _: User = Depends(require_gerant)):
+    """Locataires n'ayant pas soldé leur loyer pour le mois donné (défaut : mois courant),
+    avec un message de relance pré-rédigé et un lien WhatsApp cliquable."""
+    from urllib.parse import quote
+    if not mois:
+        mois = date.today().strftime("%Y-%m")
+    baux_actifs = db.query(Bail).filter(Bail.statut == "actif").all()
+    paiements_mois = db.query(Paiement).filter(Paiement.mois_concerne == mois).all()
+    paye_par_bail = {}
+    for p in paiements_mois:
+        if p.statut == "paye":
+            paye_par_bail[p.bail_id] = paye_par_bail.get(p.bail_id, 0) + p.montant
+
+    resultats = []
+    for b in baux_actifs:
+        deja_paye = paye_par_bail.get(b.id, 0)
+        reste = b.loyer_mensuel - deja_paye
+        if reste <= 0:
+            continue
+        maison = db.query(Maison).get(b.maison_id)
+        locataire = db.query(Locataire).get(b.locataire_id)
+        nom_loc = locataire.nom if locataire else "Locataire"
+        adresse = maison.adresse if maison else "votre logement"
+        message = (
+            f"Bonjour {nom_loc}, nous vous rappelons que le loyer de {reste:,.0f} {DEVISE} "
+            f"pour {adresse} (période {mois}) reste à régler. "
+            f"Merci de bien vouloir procéder au paiement dans les meilleurs délais. "
+            f"Cordialement, {SOCIETE_NOM}."
+        ).replace(",", " ")
+        wa = _telephone_wa(locataire.telephone if locataire else None)
+        resultats.append({
+            "bail_id": b.id,
+            "locataire": nom_loc,
+            "telephone": locataire.telephone if locataire else None,
+            "maison": adresse,
+            "loyer_mensuel": b.loyer_mensuel,
+            "deja_paye": deja_paye,
+            "reste_a_payer": reste,
+            "message_relance": message,
+            "lien_whatsapp": f"https://wa.me/{wa}?text={quote(message)}" if wa else None,
+        })
+    resultats.sort(key=lambda x: x["reste_a_payer"], reverse=True)
+    return {
+        "mois": mois,
+        "nombre_impayes": len(resultats),
+        "total_du": sum(r["reste_a_payer"] for r in resultats),
+        "impayes": resultats,
+    }
+
+
+@app.get("/api/echeancier")
+def echeancier(mois: str = None, db: Session = Depends(get_db), _: User = Depends(require_gerant)):
+    """État de paiement de chaque bail actif pour le mois : payé / partiel / dû."""
+    if not mois:
+        mois = date.today().strftime("%Y-%m")
+    baux_actifs = db.query(Bail).filter(Bail.statut == "actif").all()
+    paiements_mois = db.query(Paiement).filter(Paiement.mois_concerne == mois).all()
+    paye_par_bail = {}
+    for p in paiements_mois:
+        if p.statut == "paye":
+            paye_par_bail[p.bail_id] = paye_par_bail.get(p.bail_id, 0) + p.montant
+
+    lignes = []
+    total_attendu = 0.0
+    total_encaisse = 0.0
+    for b in baux_actifs:
+        maison = db.query(Maison).get(b.maison_id)
+        locataire = db.query(Locataire).get(b.locataire_id)
+        paye = paye_par_bail.get(b.id, 0)
+        total_attendu += b.loyer_mensuel
+        total_encaisse += min(paye, b.loyer_mensuel)
+        if paye >= b.loyer_mensuel:
+            etat = "paye"
+        elif paye > 0:
+            etat = "partiel"
+        else:
+            etat = "du"
+        lignes.append({
+            "bail_id": b.id,
+            "maison": maison.adresse if maison else "—",
+            "locataire": locataire.nom if locataire else "—",
+            "loyer_mensuel": b.loyer_mensuel,
+            "paye": paye,
+            "reste": max(0, b.loyer_mensuel - paye),
+            "etat": etat,
+        })
+    ordre = {"du": 0, "partiel": 1, "paye": 2}
+    lignes.sort(key=lambda x: ordre.get(x["etat"], 3))
+    return {
+        "mois": mois,
+        "total_attendu": total_attendu,
+        "total_encaisse": total_encaisse,
+        "taux": round(total_encaisse / total_attendu * 100, 1) if total_attendu else 0,
+        "lignes": lignes,
+    }
+
+
+def generer_contrat_pdf(bail, maison, locataire) -> io.BytesIO:
+    """Contrat de bail d'habitation à la charte TOURÉ IMMOBILIER."""
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=A4)
+    width, height = A4
+    margin = 15 * mm
+
+    c.setStrokeColor(BORDER)
+    c.setLineWidth(1)
+    c.rect(margin - 6, margin - 6, width - 2 * (margin - 6), height - 2 * (margin - 6))
+
+    header_h = 32 * mm
+    c.setFillColor(NAVY)
+    c.rect(0, height - header_h, width, header_h, stroke=0, fill=1)
+    c.setFillColor(GOLD)
+    c.rect(0, height - header_h - 2, width, 2, stroke=0, fill=1)
+    c.setFillColor(colors.white)
+    c.setFont("Helvetica-Bold", 22)
+    c.drawString(margin, height - 15 * mm, SOCIETE_NOM)
+    c.setFillColor(GOLD)
+    c.setFont("Helvetica-Oblique", 10)
+    c.drawString(margin, height - 21 * mm, SOCIETE_TAGLINE)
+    c.setFillColor(colors.white)
+    c.setFont("Helvetica-Bold", 15)
+    c.drawRightString(width - margin, height - 14 * mm, "CONTRAT DE BAIL")
+    c.setFont("Helvetica", 9)
+    c.drawRightString(width - margin, height - 20 * mm, f"N° {bail.id:05d}")
+    c.drawRightString(width - margin, height - 25 * mm, f"Établi le {date.today().strftime('%d/%m/%Y')}")
+
+    y = height - header_h - 14 * mm
+    c.setFillColor(colors.black)
+
+    def para(titre, lignes, y):
+        c.setFillColor(NAVY)
+        c.setFont("Helvetica-Bold", 11)
+        c.drawString(margin, y, titre)
+        y -= 6 * mm
+        c.setFillColor(colors.black)
+        c.setFont("Helvetica", 10)
+        for ligne in lignes:
+            c.drawString(margin + 4, y, ligne)
+            y -= 5.5 * mm
+        return y - 3 * mm
+
+    caution_txt = f"{bail.caution:,.0f} {DEVISE}".replace(",", " ") if bail.caution else "Néant"
+    loyer_txt = f"{bail.loyer_mensuel:,.0f} {DEVISE}".replace(",", " ")
+    y = para("ENTRE LES SOUSSIGNÉS", [
+        f"Le Bailleur : {SOCIETE_NOM}, représenté par {SOCIETE_GERANT}.",
+        f"Le Locataire : {locataire.nom if locataire else '-'}"
+        + (f", tél. {locataire.telephone}" if locataire and locataire.telephone else ""),
+    ], y)
+    y = para("DÉSIGNATION DU BIEN LOUÉ", [
+        f"Adresse : {maison.adresse if maison else '-'}",
+        f"Nombre de pièces : {maison.nb_pieces if maison else '-'}",
+    ], y)
+    y = para("CONDITIONS FINANCIÈRES", [
+        f"Loyer mensuel : {loyer_txt}, payable d'avance.",
+        f"Dépôt de garantie (caution) : {caution_txt}.",
+        f"Date de prise d'effet : {bail.date_debut.strftime('%d/%m/%Y') if bail.date_debut else '-'}"
+        + (f"     Échéance : {bail.date_fin.strftime('%d/%m/%Y')}" if bail.date_fin else "     Durée : indéterminée"),
+    ], y)
+    y = para("OBLIGATIONS DES PARTIES", [
+        "Le locataire s'engage à payer le loyer aux échéances convenues, à user paisiblement",
+        "des lieux et à les entretenir. Le bailleur s'engage à délivrer un logement décent et",
+        "à en garantir la jouissance paisible pendant toute la durée du bail.",
+    ], y)
+
+    y -= 6 * mm
+    c.setFont("Helvetica", 10)
+    c.drawString(margin, y, f"Fait à Abidjan, le {date.today().strftime('%d/%m/%Y')}, en deux exemplaires.")
+    y -= 18 * mm
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(margin, y, "Le Bailleur")
+    c.drawRightString(width - margin, y, "Le Locataire")
+    c.setStrokeColor(BORDER)
+    c.line(margin, y - 2, margin + 55 * mm, y - 2)
+    c.line(width - margin - 55 * mm, y - 2, width - margin, y - 2)
+
+    c.showPage()
+    c.save()
+    buffer.seek(0)
+    return buffer
+
+
+@app.get("/api/baux/{bail_id}/contrat")
+def contrat_bail(bail_id: int, db: Session = Depends(get_db), _: User = Depends(require_gerant)):
+    bail = db.query(Bail).get(bail_id)
+    if not bail:
+        raise HTTPException(404, "Bail introuvable")
+    maison = db.query(Maison).get(bail.maison_id)
+    locataire = db.query(Locataire).get(bail.locataire_id)
+    pdf = generer_contrat_pdf(bail, maison, locataire)
+    return StreamingResponse(
+        pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="contrat_bail_{bail_id:05d}.pdf"'},
+    )
+
+
 # ---------- Bilan mensuel (analyse assistée par IA) ----------
 def analyse_reglebasee(stats: dict) -> str:
     phrases = []

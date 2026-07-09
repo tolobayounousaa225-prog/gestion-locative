@@ -144,6 +144,8 @@
   .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   .actions-row { display: flex; gap: 6px; }
   .actions-row button { padding: 6px 11px; font-size: 12px; }
+  .btn-wa { display: inline-block; padding: 6px 11px; font-size: 12px; background: #25d366; color: #fff; border-radius: 6px; text-decoration: none; font-weight: 600; }
+  .btn-wa:hover { background: #1da851; }
   .hidden { display: none !important; }
   .empty-note { color: var(--muted); font-size: 13px; padding: 10px 0; }
 
@@ -278,6 +280,7 @@
     <button data-view="observations">✉️ Observations<span id="obs-badge" class="nav-badge hidden">0</span></button>
     <button data-view="bilan" id="nav-bilan" class="hidden">📈 Bilan</button>
     <button data-view="finances" id="nav-finances" class="hidden">💹 Finances</button>
+    <button data-view="relances" id="nav-relances" class="hidden">🔔 Relances</button>
     <button data-view="historique">🗂️ Historique</button>
     <button data-view="utilisateurs" id="nav-utilisateurs" class="hidden">🔑 Utilisateurs</button>
   </nav>
@@ -563,6 +566,36 @@
       </div>
     </section>
 
+    <!-- RELANCES & ECHEANCIER -->
+    <section class="view" id="view-relances">
+      <div class="page-title"><div class="bar"></div><h2>Relances & échéancier</h2></div>
+      <div class="panel">
+        <div class="bilan-toolbar">
+          <div><label>Mois</label><input type="month" id="relances-mois"></div>
+          <div><button type="button" onclick="chargerRelances()">Actualiser</button></div>
+        </div>
+        <div class="empty-note" id="relances-loading"></div>
+      </div>
+
+      <div class="bilan-grid" id="relances-cards"></div>
+
+      <div class="panel">
+        <div class="panel-header"><strong>🔔 Loyers impayés — relances prêtes à envoyer</strong></div>
+        <table>
+          <thead><tr><th>Locataire</th><th>Maison</th><th>Reste à payer</th><th>Relance</th></tr></thead>
+          <tbody id="impayes-list"></tbody>
+        </table>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header"><strong>📅 Échéancier du mois</strong></div>
+        <table>
+          <thead><tr><th>État</th><th>Locataire</th><th>Maison</th><th>Loyer</th><th>Payé</th><th>Reste</th></tr></thead>
+          <tbody id="echeancier-list"></tbody>
+        </table>
+      </div>
+    </section>
+
     <!-- HISTORIQUE -->
     <section class="view" id="view-historique">
       <div class="page-title"><div class="bar"></div><h2>Historique des locataires</h2></div>
@@ -732,6 +765,7 @@ async function showApp() {
   document.getElementById("nav-depenses").classList.toggle("hidden", !isGerant);
   document.getElementById("nav-bilan").classList.toggle("hidden", !isGerant);
   document.getElementById("nav-finances").classList.toggle("hidden", !isGerant);
+  document.getElementById("nav-relances").classList.toggle("hidden", !isGerant);
   document.getElementById("observations-title").textContent = isGerant ? "Boîte à messages" : "Mes observations";
 
   const bilanInput = document.getElementById("bilan-mois-input");
@@ -757,6 +791,7 @@ function showView(name) {
   if (name === "dashboard") renderDashboard();
   if (name === "historique") chargerHistorique();
   if (name === "finances") initFinances();
+  if (name === "relances") initRelances();
 }
 
 // ---------- Data loading ----------
@@ -967,10 +1002,24 @@ function renderBaux() {
       <td>${maisonAdresse(b.maison_id)}</td><td>${locataireNom(b.locataire_id)}</td>
       <td>${b.date_debut}</td><td>${b.loyer_mensuel}</td><td>${badge(b.statut)}</td>
       <td class="actions-row">
+        ${isGerant ? `<button class="secondary" onclick="voirContrat(${b.id})">📄 Contrat</button>` : ""}
         ${isGerant && b.statut === "actif" ? `<button class="secondary" onclick="resilierBail(${b.id})">Résilier</button>` : ""}
         ${isGerant ? `<button class="danger" onclick="deleteItem('baux', ${b.id})">Suppr.</button>` : ""}
       </td>
     </tr>`).join("") || `<tr><td colspan="6" class="empty-note">Aucun bail</td></tr>`;
+}
+
+async function voirContrat(id) {
+  try {
+    const res = await fetch(`${API}/baux/${id}/contrat`, { headers: authHeaders() });
+    if (!res.ok) throw new Error("Génération du contrat impossible");
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    window.open(url, "_blank");
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (err) {
+    alert(err.message);
+  }
 }
 
 async function resilierBail(id) {
@@ -1330,6 +1379,76 @@ async function repondreObservation(id) {
 }
 
 // ---------- Bilan mensuel ----------
+// ---------- Relances & échéancier ----------
+function initRelances() {
+  const input = document.getElementById("relances-mois");
+  if (input && !input.value) {
+    const d = new Date();
+    input.value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  }
+  chargerRelances();
+}
+
+async function chargerRelances() {
+  const mois = document.getElementById("relances-mois").value;
+  const loading = document.getElementById("relances-loading");
+  loading.textContent = "Chargement...";
+  try {
+    const [imp, ech] = await Promise.all([
+      apiFetch(`/impayes?mois=${mois}`),
+      apiFetch(`/echeancier?mois=${mois}`),
+    ]);
+    loading.textContent = "";
+    document.getElementById("relances-cards").innerHTML = `
+      <div class="card"><div class="value">${imp.nombre_impayes}</div><div class="label">Impayés ce mois</div></div>
+      <div class="card"><div class="value">${fmtFCFA(imp.total_du)}</div><div class="label">Total dû</div></div>
+      <div class="card"><div class="value">${ech.taux}%</div><div class="label">Taux d'encaissement</div></div>
+      <div class="card"><div class="value">${fmtFCFA(ech.total_encaisse)}</div><div class="label">Encaissé / ${fmtFCFA(ech.total_attendu)}</div></div>
+    `;
+    renderImpayes(imp.impayes);
+    renderEcheancier(ech.lignes);
+  } catch (err) {
+    loading.textContent = "Erreur : " + err.message;
+  }
+}
+
+function renderImpayes(impayes) {
+  const tbody = document.getElementById("impayes-list");
+  tbody.innerHTML = impayes.map(i => {
+    const wa = i.lien_whatsapp
+      ? `<a href="${i.lien_whatsapp}" target="_blank" rel="noopener" class="btn-wa">📲 WhatsApp</a>`
+      : `<span class="muted" title="Numéro manquant">—</span>`;
+    const copier = `<button class="secondary" onclick='copierRelance(${JSON.stringify(i.message_relance)})'>📋 Copier</button>`;
+    return `<tr>
+      <td><strong>${i.locataire}</strong><br><span class="muted" style="font-size:12px">${i.telephone || "Sans téléphone"}</span></td>
+      <td>${i.maison}</td>
+      <td style="color:#c0392b;font-weight:600">${fmtFCFA(i.reste_a_payer)}</td>
+      <td class="actions-row">${wa} ${copier}</td>
+    </tr>`;
+  }).join("") || `<tr><td colspan="4" class="empty-note">🎉 Aucun impayé ce mois-ci</td></tr>`;
+}
+
+function copierRelance(texte) {
+  navigator.clipboard.writeText(texte).then(
+    () => alert("Message de relance copié !"),
+    () => alert("Copie impossible, sélectionnez le texte manuellement.")
+  );
+}
+
+function renderEcheancier(lignes) {
+  const tbody = document.getElementById("echeancier-list");
+  const puce = { paye: "🟢 Payé", partiel: "🟠 Partiel", du: "🔴 Dû" };
+  tbody.innerHTML = lignes.map(l => `
+    <tr>
+      <td>${puce[l.etat] || l.etat}</td>
+      <td>${l.locataire}</td>
+      <td>${l.maison}</td>
+      <td>${fmtFCFA(l.loyer_mensuel)}</td>
+      <td>${fmtFCFA(l.paye)}</td>
+      <td>${l.reste > 0 ? `<span style="color:#c0392b">${fmtFCFA(l.reste)}</span>` : "—"}</td>
+    </tr>`).join("") || `<tr><td colspan="6" class="empty-note">Aucun bail actif</td></tr>`;
+}
+
 // ---------- Finances & pilotage ----------
 let _financesInit = false;
 let _chartEvolution = null;
