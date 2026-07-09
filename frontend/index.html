@@ -196,6 +196,7 @@
     .no-print { display: none !important; }
   }
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 </head>
 <body>
 
@@ -276,6 +277,7 @@
     <button data-view="pieces">🧾 Pièces justif.</button>
     <button data-view="observations">✉️ Observations<span id="obs-badge" class="nav-badge hidden">0</span></button>
     <button data-view="bilan" id="nav-bilan" class="hidden">📈 Bilan</button>
+    <button data-view="finances" id="nav-finances" class="hidden">💹 Finances</button>
     <button data-view="historique">🗂️ Historique</button>
     <button data-view="utilisateurs" id="nav-utilisateurs" class="hidden">🔑 Utilisateurs</button>
   </nav>
@@ -524,6 +526,43 @@
       </div>
     </section>
 
+    <!-- FINANCES -->
+    <section class="view" id="view-finances">
+      <div class="page-title"><div class="bar"></div><h2>Finances & pilotage</h2></div>
+      <div class="panel">
+        <div class="bilan-toolbar">
+          <div><label>Année</label><select id="finances-annee"></select></div>
+          <div><label>Évolution (mois)</label>
+            <select id="finances-nbmois">
+              <option value="6">6 mois</option>
+              <option value="12" selected>12 mois</option>
+              <option value="24">24 mois</option>
+            </select>
+          </div>
+          <div><button type="button" onclick="chargerFinances()">Actualiser</button></div>
+          <div><button type="button" class="secondary" onclick="exporterCompta('paiements')">⬇️ Export paiements (CSV)</button></div>
+          <div><button type="button" class="secondary" onclick="exporterCompta('depenses')">⬇️ Export dépenses (CSV)</button></div>
+        </div>
+        <div class="empty-note" id="finances-loading"></div>
+      </div>
+
+      <div class="bilan-grid" id="finances-cards"></div>
+
+      <div class="panel">
+        <div class="panel-header"><strong>Évolution : encaissements, dépenses et résultat net</strong></div>
+        <div style="padding:12px"><canvas id="chart-evolution" height="110"></canvas></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header"><strong>Rentabilité par maison</strong></div>
+        <div style="padding:12px"><canvas id="chart-rentabilite" height="110"></canvas></div>
+        <table>
+          <thead><tr><th>Maison</th><th>Encaissé</th><th>Charges</th><th>Résultat net</th><th>Marge</th></tr></thead>
+          <tbody id="finances-rentabilite-list"></tbody>
+        </table>
+      </div>
+    </section>
+
     <!-- HISTORIQUE -->
     <section class="view" id="view-historique">
       <div class="page-title"><div class="bar"></div><h2>Historique des locataires</h2></div>
@@ -692,6 +731,7 @@ async function showApp() {
   document.getElementById("nav-utilisateurs").classList.toggle("hidden", !isGerant);
   document.getElementById("nav-depenses").classList.toggle("hidden", !isGerant);
   document.getElementById("nav-bilan").classList.toggle("hidden", !isGerant);
+  document.getElementById("nav-finances").classList.toggle("hidden", !isGerant);
   document.getElementById("observations-title").textContent = isGerant ? "Boîte à messages" : "Mes observations";
 
   const bilanInput = document.getElementById("bilan-mois-input");
@@ -716,6 +756,7 @@ function showView(name) {
   document.querySelectorAll(".view").forEach(v => v.classList.toggle("active", v.id === "view-" + name));
   if (name === "dashboard") renderDashboard();
   if (name === "historique") chargerHistorique();
+  if (name === "finances") initFinances();
 }
 
 // ---------- Data loading ----------
@@ -1289,6 +1330,134 @@ async function repondreObservation(id) {
 }
 
 // ---------- Bilan mensuel ----------
+// ---------- Finances & pilotage ----------
+let _financesInit = false;
+let _chartEvolution = null;
+let _chartRentabilite = null;
+
+function fmtFCFA(n) {
+  return (Math.round(n) || 0).toLocaleString("fr-FR") + " FCFA";
+}
+
+function initFinances() {
+  if (!_financesInit) {
+    const sel = document.getElementById("finances-annee");
+    const anneeCourante = new Date().getFullYear();
+    sel.innerHTML = "";
+    for (let a = anneeCourante; a >= anneeCourante - 4; a--) {
+      sel.innerHTML += `<option value="${a}">${a}</option>`;
+    }
+    _financesInit = true;
+  }
+  chargerFinances();
+}
+
+async function chargerFinances() {
+  const annee = document.getElementById("finances-annee").value || new Date().getFullYear();
+  const nbmois = document.getElementById("finances-nbmois").value || 12;
+  const loading = document.getElementById("finances-loading");
+  loading.textContent = "Chargement des données financières...";
+  try {
+    const [rentabilite, evolution] = await Promise.all([
+      apiFetch(`/finances/rentabilite?annee=${annee}`),
+      apiFetch(`/finances/evolution?mois=${nbmois}`),
+    ]);
+    loading.textContent = "";
+    renderFinancesCards(rentabilite);
+    renderRentabilite(rentabilite);
+    renderEvolutionChart(evolution.evolution);
+  } catch (err) {
+    loading.textContent = "Erreur : " + err.message;
+  }
+}
+
+function renderFinancesCards(r) {
+  document.getElementById("finances-cards").innerHTML = `
+    <div class="card"><div class="value">${fmtFCFA(r.total_encaisse)}</div><div class="label">Encaissé ${r.annee}</div></div>
+    <div class="card"><div class="value">${fmtFCFA(r.total_charges)}</div><div class="label">Charges ${r.annee}</div></div>
+    <div class="card"><div class="value">${fmtFCFA(r.resultat_net_global)}</div><div class="label">Résultat net ${r.annee}</div></div>
+    <div class="card"><div class="value">${r.lignes.length}</div><div class="label">Biens suivis</div></div>
+  `;
+}
+
+function renderRentabilite(r) {
+  const tbody = document.getElementById("finances-rentabilite-list");
+  tbody.innerHTML = r.lignes.map(l => {
+    const net = l.resultat_net;
+    const couleur = net > 0 ? "#0a7d3c" : (net < 0 ? "#c0392b" : "var(--muted)");
+    const marge = l.rendement_pct != null ? l.rendement_pct + " %" : "—";
+    return `<tr>
+      <td><strong>${l.adresse}</strong></td>
+      <td>${fmtFCFA(l.encaisse)}</td>
+      <td>${fmtFCFA(l.charges_totales)}</td>
+      <td style="color:${couleur};font-weight:600">${fmtFCFA(net)}</td>
+      <td>${marge}</td>
+    </tr>`;
+  }).join("") || `<tr><td colspan="5" class="empty-note">Aucune donnée</td></tr>`;
+
+  // Graphique barres rentabilité (net par maison)
+  const ctx = document.getElementById("chart-rentabilite");
+  if (_chartRentabilite) _chartRentabilite.destroy();
+  _chartRentabilite = new Chart(ctx, {
+    type: "bar",
+    data: {
+      labels: r.lignes.map(l => l.adresse),
+      datasets: [{
+        label: "Résultat net (FCFA)",
+        data: r.lignes.map(l => l.resultat_net),
+        backgroundColor: r.lignes.map(l => l.resultat_net >= 0 ? "rgba(16,124,60,0.75)" : "rgba(192,57,43,0.75)"),
+        borderRadius: 5,
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: { y: { ticks: { callback: v => (v / 1000) + "k" } } },
+    },
+  });
+}
+
+function renderEvolutionChart(evo) {
+  const ctx = document.getElementById("chart-evolution");
+  if (_chartEvolution) _chartEvolution.destroy();
+  _chartEvolution = new Chart(ctx, {
+    type: "line",
+    data: {
+      labels: evo.map(e => e.mois),
+      datasets: [
+        { label: "Encaissé", data: evo.map(e => e.encaisse), borderColor: "#0a7d3c", backgroundColor: "rgba(16,124,60,0.1)", tension: 0.3, fill: true },
+        { label: "Dépenses", data: evo.map(e => e.depenses), borderColor: "#c0392b", backgroundColor: "rgba(192,57,43,0.08)", tension: 0.3, fill: true },
+        { label: "Résultat net", data: evo.map(e => e.resultat_net), borderColor: "#c9a227", borderDash: [6, 4], tension: 0.3 },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: { legend: { position: "bottom" } },
+      scales: { y: { ticks: { callback: v => (v / 1000) + "k" } } },
+    },
+  });
+}
+
+async function exporterCompta(type) {
+  const annee = document.getElementById("finances-annee").value || new Date().getFullYear();
+  try {
+    const res = await fetch(`${API}/finances/export?type=${type}&annee=${annee}`, { headers: authHeaders() });
+    if (!res.ok) throw new Error("Export impossible");
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${type}_${annee}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
 async function genererBilan() {
   const mois = document.getElementById("bilan-mois-input").value;
   if (!mois) return;

@@ -1428,6 +1428,164 @@ def dashboard_evolution(mois: int = 6, db: Session = Depends(get_db), current_us
     return resultats
 
 
+# ---------- Finances : rentabilité, évolution, export comptable ----------
+def _periode_mois(annee: int) -> tuple:
+    """Premier et dernier jour de l'année demandée."""
+    return date(annee, 1, 1), date(annee, 12, 31)
+
+
+@app.get("/api/finances/rentabilite")
+def finances_rentabilite(annee: int = None, db: Session = Depends(get_db), _: User = Depends(require_gerant)):
+    """Rentabilité par maison sur une année : loyers encaissés, dépenses, résultat net, rendement."""
+    if annee is None:
+        annee = date.today().year
+    debut, fin = _periode_mois(annee)
+    mois_annee = [f"{annee}-{m:02d}" for m in range(1, 13)]
+
+    maisons = db.query(Maison).all()
+    lignes = []
+    total_encaisse_global = 0.0
+    total_depenses_global = 0.0
+    for maison in maisons:
+        bail_ids = {b.id for b in db.query(Bail.id).filter(Bail.maison_id == maison.id).all()}
+        # Loyers encaissés (paiements payés de l'année pour les baux de cette maison)
+        encaisse = 0.0
+        if bail_ids:
+            paiements = db.query(Paiement).filter(
+                Paiement.mois_concerne.in_(mois_annee),
+                Paiement.statut == "paye",
+                Paiement.bail_id.in_(bail_ids),
+            ).all()
+            encaisse = sum(p.montant for p in paiements)
+        # Dépenses de la maison sur l'année
+        depenses = db.query(Depense).filter(
+            Depense.maison_id == maison.id,
+            Depense.date_depense >= debut,
+            Depense.date_depense <= fin,
+        ).all()
+        total_dep = sum(d.montant for d in depenses)
+        # Coût des tickets de maintenance de la maison sur l'année
+        tickets = db.query(Ticket).filter(
+            Ticket.maison_id == maison.id,
+            Ticket.date_creation >= datetime.combine(debut, datetime.min.time()),
+            Ticket.date_creation <= datetime.combine(fin, datetime.max.time()),
+        ).all()
+        cout_tickets = sum(t.cout for t in tickets)
+        charges = total_dep + cout_tickets
+        net = encaisse - charges
+        rendement = round(net / encaisse * 100, 1) if encaisse else None
+        total_encaisse_global += encaisse
+        total_depenses_global += charges
+        lignes.append({
+            "maison_id": maison.id,
+            "adresse": maison.adresse,
+            "proprietaire": maison.proprietaire,
+            "statut": maison.statut,
+            "loyer_reference": maison.loyer_reference,
+            "encaisse": round(encaisse, 2),
+            "depenses": round(total_dep, 2),
+            "cout_tickets": round(cout_tickets, 2),
+            "charges_totales": round(charges, 2),
+            "resultat_net": round(net, 2),
+            "rendement_pct": rendement,
+        })
+    lignes.sort(key=lambda x: x["resultat_net"], reverse=True)
+    return {
+        "annee": annee,
+        "lignes": lignes,
+        "total_encaisse": round(total_encaisse_global, 2),
+        "total_charges": round(total_depenses_global, 2),
+        "resultat_net_global": round(total_encaisse_global - total_depenses_global, 2),
+    }
+
+
+@app.get("/api/finances/evolution")
+def finances_evolution(mois: int = 12, maison_id: Optional[int] = None, db: Session = Depends(get_db), _: User = Depends(require_gerant)):
+    """Évolution mensuelle : loyers encaissés, dépenses et résultat net, sur n mois."""
+    n = max(1, min(mois, 24))
+    periode = _mois_range(n)
+
+    if maison_id:
+        bail_ids_perimetre = {b.id for b in db.query(Bail.id).filter(Bail.maison_id == maison_id).all()}
+    else:
+        bail_ids_perimetre = None
+
+    resultats = []
+    for m in periode:
+        q_pay = db.query(Paiement).filter(Paiement.mois_concerne == m, Paiement.statut == "paye")
+        paiements = q_pay.all()
+        if bail_ids_perimetre is not None:
+            paiements = [p for p in paiements if p.bail_id in bail_ids_perimetre]
+        encaisse = sum(p.montant for p in paiements)
+
+        try:
+            an, mo = (int(x) for x in m.split("-"))
+            d1 = date(an, mo, 1)
+            d2 = date(an, mo, calendar.monthrange(an, mo)[1])
+        except Exception:
+            d1 = d2 = None
+        depenses = 0.0
+        if d1:
+            q_dep = db.query(Depense).filter(Depense.date_depense >= d1, Depense.date_depense <= d2)
+            if maison_id:
+                q_dep = q_dep.filter(Depense.maison_id == maison_id)
+            depenses = sum(d.montant for d in q_dep.all())
+
+        resultats.append({
+            "mois": m,
+            "encaisse": round(encaisse, 2),
+            "depenses": round(depenses, 2),
+            "resultat_net": round(encaisse - depenses, 2),
+        })
+    return {"maison_id": maison_id, "evolution": resultats}
+
+
+@app.get("/api/finances/export")
+def finances_export(annee: int = None, type: str = "paiements", db: Session = Depends(get_db), _: User = Depends(require_gerant)):
+    """Export comptable CSV des paiements ou des dépenses d'une année."""
+    if annee is None:
+        annee = date.today().year
+    debut, fin = _periode_mois(annee)
+    mois_annee = [f"{annee}-{m:02d}" for m in range(1, 13)]
+
+    def csv_line(cols):
+        out = []
+        for c in cols:
+            s = "" if c is None else str(c)
+            if any(ch in s for ch in [",", '"', "\n"]):
+                s = '"' + s.replace('"', '""') + '"'
+            out.append(s)
+        return ";".join(out)
+
+    lignes = []
+    if type == "depenses":
+        lignes.append(csv_line(["Date", "Categorie", "Libelle", "Maison", "Montant"]))
+        depenses = db.query(Depense).filter(Depense.date_depense >= debut, Depense.date_depense <= fin).order_by(Depense.date_depense).all()
+        maison_map = {m.id: m.adresse for m in db.query(Maison).all()}
+        for d in depenses:
+            lignes.append(csv_line([d.date_depense, d.categorie, d.libelle, maison_map.get(d.maison_id, "Général"), d.montant]))
+        nom = f"depenses_{annee}.csv"
+    else:
+        lignes.append(csv_line(["Date paiement", "Mois concerne", "Maison", "Locataire", "Mode", "Statut", "Montant"]))
+        baux = {b.id: b for b in db.query(Bail).all()}
+        maison_map = {m.id: m.adresse for m in db.query(Maison).all()}
+        loc_map = {l.id: l.nom for l in db.query(Locataire).all()}
+        paiements = db.query(Paiement).filter(Paiement.mois_concerne.in_(mois_annee)).order_by(Paiement.mois_concerne).all()
+        for p in paiements:
+            bail = baux.get(p.bail_id)
+            maison = maison_map.get(bail.maison_id, "") if bail else ""
+            locataire = loc_map.get(bail.locataire_id, "") if bail else ""
+            lignes.append(csv_line([p.date_paiement, p.mois_concerne, maison, locataire, p.mode, p.statut, p.montant]))
+        nom = f"paiements_{annee}.csv"
+
+    contenu = "\ufeff" + "\n".join(lignes)  # BOM UTF-8 pour Excel
+    return Response(
+        content=contenu,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{nom}"'},
+    )
+
+
 # ---------- Bilan mensuel (analyse assistée par IA) ----------
 def analyse_reglebasee(stats: dict) -> str:
     phrases = []
