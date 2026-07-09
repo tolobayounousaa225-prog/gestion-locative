@@ -82,12 +82,29 @@ class User(Base):
     maisons = relationship("Maison", back_populates="proprietaire_user")
 
 
+class Batiment(Base):
+    """Immeuble/bâtiment regroupant plusieurs logements. L'adresse et le propriétaire
+    sont définis une seule fois ici et hérités par tous les logements rattachés."""
+    __tablename__ = "batiments"
+    id = Column(Integer, primary_key=True, index=True)
+    nom = Column(String, nullable=False)  # ex. "Immeuble Marcory Remblais"
+    adresse = Column(String, nullable=False)
+    proprietaire = Column(String, nullable=True)  # nom libre (affichage)
+    proprietaire_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    maisons = relationship("Maison", back_populates="batiment")
+    proprietaire_user = relationship("User")
+
+
 class Maison(Base):
     __tablename__ = "maisons"
     id = Column(Integer, primary_key=True, index=True)
     adresse = Column(String, nullable=False)
     proprietaire = Column(String, nullable=True)  # nom libre (affichage / historique)
     proprietaire_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    batiment_id = Column(Integer, ForeignKey("batiments.id"), nullable=True)  # logement rattaché à un bâtiment
+    nom_logement = Column(String, nullable=True)  # ex. "Appartement 3", "Porte A" (court, dans un bâtiment)
     nb_pieces = Column(Integer, default=1)
     loyer_reference = Column(Float, default=0)
     statut = Column(String, default="libre")  # libre / occupee / travaux
@@ -95,6 +112,7 @@ class Maison(Base):
     baux = relationship("Bail", back_populates="maison")
     tickets = relationship("Ticket", back_populates="maison")
     proprietaire_user = relationship("User", back_populates="maisons")
+    batiment = relationship("Batiment", back_populates="maisons")
 
 
 class Locataire(Base):
@@ -246,8 +264,50 @@ try:
     _add_column_if_missing("users", "reset_token_expiry", "TIMESTAMP")
     _add_column_if_missing("depenses", "maison_id", "INTEGER")
     _add_column_if_missing("locataires", "portail_token", "VARCHAR")
+    _add_column_if_missing("maisons", "batiment_id", "INTEGER")
+    _add_column_if_missing("maisons", "nom_logement", "VARCHAR")
 except Exception:
     pass
+
+
+def migrer_maisons_vers_batiments():
+    """Regroupe les maisons existantes sans bâtiment sous des bâtiments créés à partir
+    de leur adresse. Les maisons de même adresse (insensible casse/espaces) sont
+    rassemblées sous un même bâtiment. Idempotent : ne touche pas aux maisons déjà rattachées."""
+    db = SessionLocal()
+    try:
+        orphelines = db.query(Maison).filter(Maison.batiment_id.is_(None)).all()
+        if not orphelines:
+            return
+        # Regrouper par clé d'adresse normalisée
+        groupes = {}
+        for m in orphelines:
+            cle = " ".join((m.adresse or "").strip().lower().split())
+            groupes.setdefault(cle, []).append(m)
+        for cle, maisons in groupes.items():
+            ref = maisons[0]
+            # Réutilise un bâtiment existant à la même adresse si présent
+            batiment = db.query(Batiment).filter(Batiment.adresse == ref.adresse).first()
+            if not batiment:
+                batiment = Batiment(
+                    nom=ref.adresse,
+                    adresse=ref.adresse,
+                    proprietaire=ref.proprietaire,
+                    proprietaire_id=ref.proprietaire_id,
+                )
+                db.add(batiment)
+                db.flush()
+            for m in maisons:
+                m.batiment_id = batiment.id
+                # Hérite du propriétaire du bâtiment si défini
+                if batiment.proprietaire_id and not m.proprietaire_id:
+                    m.proprietaire_id = batiment.proprietaire_id
+                    m.proprietaire = batiment.proprietaire
+        db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
 
 
 # ---------------------------------------------------------------------------
@@ -293,6 +353,8 @@ class MaisonIn(BaseModel):
     adresse: str
     proprietaire: Optional[str] = None
     proprietaire_id: Optional[int] = None
+    batiment_id: Optional[int] = None
+    nom_logement: Optional[str] = None
     nb_pieces: int = 1
     loyer_reference: float = 0
     statut: str = "libre"
@@ -301,6 +363,19 @@ class MaisonIn(BaseModel):
 class MaisonOut(MaisonIn):
     model_config = ConfigDict(from_attributes=True)
     id: int
+
+
+class BatimentIn(BaseModel):
+    nom: str
+    adresse: str
+    proprietaire: Optional[str] = None
+    proprietaire_id: Optional[int] = None
+
+
+class BatimentOut(BatimentIn):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    nb_logements: int = 0
 
 
 class LocataireIn(BaseModel):
@@ -517,6 +592,7 @@ app.add_middleware(
 )
 
 ensure_default_admin()
+migrer_maisons_vers_batiments()
 
 
 @app.post("/api/auth/login", response_model=Token)
@@ -629,6 +705,76 @@ def delete_user(user_id: int, db: Session = Depends(get_db), current: User = Dep
     return {"ok": True}
 
 
+# ---------- Bâtiments ----------
+def _batiment_out(b: Batiment, db: Session) -> dict:
+    nb = db.query(Maison).filter(Maison.batiment_id == b.id).count()
+    return {
+        "id": b.id, "nom": b.nom, "adresse": b.adresse,
+        "proprietaire": b.proprietaire, "proprietaire_id": b.proprietaire_id,
+        "nb_logements": nb,
+    }
+
+
+@app.get("/api/batiments", response_model=List[BatimentOut])
+def list_batiments(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    q = db.query(Batiment)
+    if current_user.role == "proprietaire":
+        q = q.filter(Batiment.proprietaire_id == current_user.id)
+    return [_batiment_out(b, db) for b in q.order_by(Batiment.nom).all()]
+
+
+@app.post("/api/batiments", response_model=BatimentOut)
+def create_batiment(data: BatimentIn, db: Session = Depends(get_db), current: User = Depends(require_gerant)):
+    payload = data.model_dump()
+    if payload.get("proprietaire_id") and not payload.get("proprietaire"):
+        owner = db.query(User).get(payload["proprietaire_id"])
+        if owner:
+            payload["proprietaire"] = owner.nom
+    batiment = Batiment(**payload)
+    db.add(batiment)
+    db.commit()
+    db.refresh(batiment)
+    journaliser(db, current, "creation", "batiment", f"Bâtiment « {batiment.nom} »")
+    return _batiment_out(batiment, db)
+
+
+@app.put("/api/batiments/{batiment_id}", response_model=BatimentOut)
+def update_batiment(batiment_id: int, data: BatimentIn, db: Session = Depends(get_db), current: User = Depends(require_gerant)):
+    batiment = db.query(Batiment).get(batiment_id)
+    if not batiment:
+        raise HTTPException(404, "Bâtiment introuvable")
+    payload = data.model_dump()
+    if payload.get("proprietaire_id"):
+        owner = db.query(User).get(payload["proprietaire_id"])
+        payload["proprietaire"] = owner.nom if owner else payload.get("proprietaire")
+    for k, v in payload.items():
+        setattr(batiment, k, v)
+    # Répercuter propriétaire et adresse sur tous les logements du bâtiment
+    db.query(Maison).filter(Maison.batiment_id == batiment_id).update({
+        "proprietaire_id": batiment.proprietaire_id,
+        "proprietaire": batiment.proprietaire,
+        "adresse": batiment.adresse,
+    })
+    db.commit()
+    db.refresh(batiment)
+    journaliser(db, current, "modification", "batiment", f"Bâtiment « {batiment.nom} »")
+    return _batiment_out(batiment, db)
+
+
+@app.delete("/api/batiments/{batiment_id}")
+def delete_batiment(batiment_id: int, db: Session = Depends(get_db), current: User = Depends(require_gerant)):
+    batiment = db.query(Batiment).get(batiment_id)
+    if not batiment:
+        raise HTTPException(404, "Bâtiment introuvable")
+    nb = db.query(Maison).filter(Maison.batiment_id == batiment_id).count()
+    if nb > 0:
+        raise HTTPException(400, f"Ce bâtiment contient {nb} logement(s). Déplacez ou supprimez-les d'abord.")
+    db.delete(batiment)
+    db.commit()
+    journaliser(db, current, "suppression", "batiment", f"Bâtiment « {batiment.nom} »")
+    return {"ok": True}
+
+
 # ---------- Maisons ----------
 @app.get("/api/maisons", response_model=List[MaisonOut])
 def list_maisons(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -641,7 +787,15 @@ def list_maisons(db: Session = Depends(get_db), current_user: User = Depends(get
 @app.post("/api/maisons", response_model=MaisonOut)
 def create_maison(data: MaisonIn, db: Session = Depends(get_db), current: User = Depends(require_gerant)):
     payload = data.model_dump()
-    if payload.get("proprietaire_id") and not payload.get("proprietaire"):
+    # Si rattaché à un bâtiment, hériter de son adresse et de son propriétaire
+    if payload.get("batiment_id"):
+        batiment = db.query(Batiment).get(payload["batiment_id"])
+        if not batiment:
+            raise HTTPException(404, "Bâtiment introuvable")
+        payload["adresse"] = batiment.adresse
+        payload["proprietaire_id"] = batiment.proprietaire_id
+        payload["proprietaire"] = batiment.proprietaire
+    elif payload.get("proprietaire_id") and not payload.get("proprietaire"):
         owner = db.query(User).get(payload["proprietaire_id"])
         if owner:
             payload["proprietaire"] = owner.nom
@@ -649,7 +803,8 @@ def create_maison(data: MaisonIn, db: Session = Depends(get_db), current: User =
     db.add(maison)
     db.commit()
     db.refresh(maison)
-    journaliser(db, current, "creation", "maison", f"Maison « {maison.adresse} »")
+    label = maison.adresse
+    journaliser(db, current, "creation", "maison", f"Logement « {label} »")
     return maison
 
 

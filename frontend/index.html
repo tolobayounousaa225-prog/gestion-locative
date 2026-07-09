@@ -290,6 +290,7 @@
     <button data-view="dashboard" class="active">📊 Tableau de bord</button>
     <button data-view="recherche">🔍 Recherche</button>
     <button data-view="maisons">🏠 Maisons</button>
+    <button data-view="batiments" id="nav-batiments" class="hidden">🏢 Bâtiments</button>
     <button data-view="locataires">👥 Locataires</button>
     <button data-view="baux">📃 Baux</button>
     <button data-view="paiements">💰 Paiements</button>
@@ -332,15 +333,41 @@
       </div>
     </section>
 
+    <!-- BATIMENTS -->
+    <section class="view" id="view-batiments">
+      <div class="page-title"><div class="bar"></div><h2>Bâtiments</h2></div>
+      <div class="panel gerant-only">
+        <div class="panel-header"><strong id="batiment-form-title">Nouveau bâtiment</strong></div>
+        <p class="muted" style="margin:0 0 12px">Un bâtiment regroupe plusieurs logements à une même adresse. Saisissez l'adresse une seule fois ici : tous ses logements en hériteront, ainsi que du propriétaire.</p>
+        <form id="form-batiment" class="form-grid">
+          <input type="hidden" name="edit_id" id="batiment-edit-id">
+          <div><label>Nom du bâtiment</label><input name="nom" required placeholder="Ex : Immeuble Marcory Remblais"></div>
+          <div><label>Adresse</label><input name="adresse" required placeholder="Ex : Marcory Remblais, Rue 12"></div>
+          <div><label>Propriétaire</label><select name="proprietaire_id" id="batiment-proprietaire-select"><option value="">— Aucun —</option></select></div>
+          <div style="align-self:end; display:flex; gap:6px;">
+            <button type="submit" id="batiment-submit-btn">Ajouter</button>
+            <button type="button" class="secondary hidden" id="batiment-cancel-btn" onclick="annulerEditBatiment()">Annuler</button>
+          </div>
+        </form>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><strong>Liste des bâtiments</strong></div>
+        <table><thead><tr><th>Nom</th><th>Adresse</th><th>Propriétaire</th><th>Logements</th><th></th></tr></thead>
+          <tbody id="batiments-list"></tbody>
+        </table>
+      </div>
+    </section>
+
     <!-- MAISONS -->
     <section class="view" id="view-maisons">
-      <div class="page-title"><div class="bar"></div><h2>Maisons</h2></div>
+      <div class="page-title"><div class="bar"></div><h2>Logements</h2></div>
       <div class="panel gerant-only">
-        <div class="panel-header"><strong id="maison-form-title">Nouvelle maison</strong></div>
+        <div class="panel-header"><strong id="maison-form-title">Nouveau logement</strong></div>
+        <p class="muted" style="margin:0 0 12px">Choisissez le bâtiment auquel appartient ce logement : il héritera de son adresse et de son propriétaire. Créez d'abord un bâtiment si nécessaire.</p>
         <form id="form-maison" class="form-grid">
           <input type="hidden" name="edit_id" id="maison-edit-id">
-          <div><label>Adresse</label><input name="adresse" required></div>
-          <div><label>Propriétaire</label><select name="proprietaire_id" id="maison-proprietaire-select"><option value="">— Aucun (libre) —</option></select></div>
+          <div><label>Bâtiment</label><select name="batiment_id" id="maison-batiment-select" required><option value="">— Choisir un bâtiment —</option></select></div>
+          <div><label>Nom du logement</label><input name="nom_logement" placeholder="Ex : Appartement 3, Porte A"></div>
           <div><label>Nb pièces</label><input name="nb_pieces" type="number" value="1"></div>
           <div><label>Loyer de référence</label><input name="loyer_reference" type="number" step="0.01" value="0"></div>
           <div><label>Statut</label>
@@ -353,8 +380,8 @@
         </form>
       </div>
       <div class="panel">
-        <div class="panel-header"><strong>Liste des maisons</strong></div>
-        <table><thead><tr><th>Adresse</th><th>Propriétaire</th><th>Pièces</th><th>Loyer réf.</th><th>Statut</th><th></th></tr></thead>
+        <div class="panel-header"><strong>Liste des logements</strong></div>
+        <table><thead><tr><th>Bâtiment</th><th>Logement</th><th>Propriétaire</th><th>Pièces</th><th>Loyer réf.</th><th>Statut</th><th></th></tr></thead>
           <tbody id="maisons-list"></tbody>
         </table>
       </div>
@@ -698,7 +725,7 @@
 const API = "/api";
 let TOKEN = localStorage.getItem("gl_token") || null;
 let ME = null;
-let CACHE = { maisons: [], locataires: [], baux: [], paiements: [], tickets: [], users: [], depenses: [], observations: [] };
+let CACHE = { maisons: [], locataires: [], baux: [], paiements: [], tickets: [], users: [], depenses: [], observations: [], batiments: [] };
 
 // ---------- Auth ----------
 function authHeaders(extra = {}) {
@@ -815,6 +842,7 @@ async function showApp() {
   document.getElementById("nav-depenses").classList.toggle("hidden", !isGerant);
   document.getElementById("nav-bilan").classList.toggle("hidden", !isGerant);
   document.getElementById("nav-finances").classList.toggle("hidden", !isGerant);
+  document.getElementById("nav-batiments").classList.toggle("hidden", !isGerant);
   document.getElementById("nav-relances").classList.toggle("hidden", !isGerant);
   document.getElementById("nav-systeme").classList.toggle("hidden", !isGerant);
   document.getElementById("observations-title").textContent = isGerant ? "Boîte à messages" : "Mes observations";
@@ -852,12 +880,13 @@ async function refreshAll() {
   const isGerant = ME && ME.role === "gerant";
   const calls = [
     apiFetch("/maisons"), apiFetch("/locataires"), apiFetch("/baux"), apiFetch("/paiements"), apiFetch("/tickets"),
-    apiFetch("/observations"), apiFetch("/pieces"),
+    apiFetch("/observations"), apiFetch("/pieces"), apiFetch("/batiments"),
   ];
   if (isGerant) { calls.push(apiFetch("/users")); calls.push(apiFetch("/depenses")); }
-  const [maisons, locataires, baux, paiements, tickets, observations, pieces, users, depenses] = await Promise.all(calls);
-  CACHE = { maisons, locataires, baux, paiements, tickets, users: users || [], depenses: depenses || [], observations: observations || [], pieces: pieces || [] };
+  const [maisons, locataires, baux, paiements, tickets, observations, pieces, batiments, users, depenses] = await Promise.all(calls);
+  CACHE = { maisons, locataires, baux, paiements, tickets, users: users || [], depenses: depenses || [], observations: observations || [], pieces: pieces || [], batiments: batiments || [] };
   if (document.getElementById("view-dashboard").classList.contains("active")) renderDashboard();
+  renderBatiments();
   renderMaisons();
   renderLocataires();
   renderBaux();
@@ -871,7 +900,13 @@ async function refreshAll() {
 }
 
 function badge(text) { return `<span class="badge ${text}">${text.replace("_", " ")}</span>`; }
-function maisonAdresse(id) { return CACHE.maisons.find(m => m.id === id)?.adresse || "—"; }
+function maisonAdresse(id) {
+  const m = CACHE.maisons.find(x => x.id === id);
+  if (!m) return "—";
+  const bat = (CACHE.batiments || []).find(b => b.id === m.batiment_id);
+  const base = bat ? bat.nom : m.adresse;
+  return m.nom_logement ? `${base} — ${m.nom_logement}` : base;
+}
 function locataireNom(id) { return CACHE.locataires.find(l => l.id === id)?.nom || "—"; }
 
 // ---------- Mode sombre ----------
@@ -987,13 +1022,82 @@ async function renderEvolution() {
 }
 
 // ---------- Maisons ----------
+// ---------- Bâtiments ----------
+const batimentForm = document.getElementById("form-batiment");
+if (batimentForm) {
+  batimentForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    const propId = f.get("proprietaire_id");
+    const editId = f.get("edit_id");
+    const payload = {
+      nom: f.get("nom"), adresse: f.get("adresse"),
+      proprietaire_id: propId ? Number(propId) : null,
+    };
+    try {
+      if (editId) {
+        await apiFetch(`/batiments/${editId}`, { method: "PUT", body: JSON.stringify(payload) });
+      } else {
+        await apiFetch("/batiments", { method: "POST", body: JSON.stringify(payload) });
+      }
+      annulerEditBatiment();
+      await refreshAll();
+    } catch (err) {
+      alert(err.message);
+    }
+  });
+}
+
+function editBatiment(b) {
+  const form = document.getElementById("form-batiment");
+  form.nom.value = b.nom || "";
+  form.adresse.value = b.adresse || "";
+  form.proprietaire_id.value = b.proprietaire_id || "";
+  document.getElementById("batiment-edit-id").value = b.id;
+  document.getElementById("batiment-form-title").textContent = `Modifier — ${b.nom}`;
+  document.getElementById("batiment-submit-btn").textContent = "Enregistrer";
+  document.getElementById("batiment-cancel-btn").classList.remove("hidden");
+  document.getElementById("view-batiments").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function annulerEditBatiment() {
+  const form = document.getElementById("form-batiment");
+  if (!form) return;
+  form.reset();
+  document.getElementById("batiment-edit-id").value = "";
+  document.getElementById("batiment-form-title").textContent = "Nouveau bâtiment";
+  document.getElementById("batiment-submit-btn").textContent = "Ajouter";
+  document.getElementById("batiment-cancel-btn").classList.add("hidden");
+}
+
+function renderBatiments() {
+  const tbody = document.getElementById("batiments-list");
+  if (!tbody) return;
+  const isGerant = ME && ME.role === "gerant";
+  tbody.innerHTML = (CACHE.batiments || []).map(b => `
+    <tr>
+      <td><strong>${b.nom}</strong></td>
+      <td>${b.adresse}</td>
+      <td>${b.proprietaire || "—"}</td>
+      <td>${b.nb_logements} logement(s)</td>
+      <td class="actions-row ${isGerant ? "" : "hidden"}">
+        <button class="secondary" onclick='editBatiment(${JSON.stringify(b).replace(/'/g, "&apos;")})'>Modifier</button>
+        <button class="danger" onclick="deleteItem('batiments', ${b.id})">Suppr.</button>
+      </td>
+    </tr>`).join("") || `<tr><td colspan="5" class="empty-note">Aucun bâtiment. Créez-en un pour commencer.</td></tr>`;
+}
+
 document.getElementById("form-maison").addEventListener("submit", async (e) => {
   e.preventDefault();
   const f = new FormData(e.target);
-  const propId = f.get("proprietaire_id");
+  const batId = f.get("batiment_id");
   const editId = f.get("edit_id");
+  if (!batId) { alert("Veuillez choisir un bâtiment. Créez-en un d'abord si la liste est vide."); return; }
+  const bat = CACHE.batiments.find(b => b.id === Number(batId));
   const payload = {
-    adresse: f.get("adresse"), proprietaire_id: propId ? Number(propId) : null,
+    batiment_id: Number(batId),
+    nom_logement: f.get("nom_logement") || null,
+    adresse: bat ? bat.adresse : "",  // hérité côté serveur, envoyé pour compat
     nb_pieces: Number(f.get("nb_pieces")), loyer_reference: Number(f.get("loyer_reference")),
     statut: f.get("statut"),
   };
@@ -1012,13 +1116,13 @@ document.getElementById("form-maison").addEventListener("submit", async (e) => {
 
 function editMaison(m) {
   const form = document.getElementById("form-maison");
-  form.adresse.value = m.adresse || "";
-  form.proprietaire_id.value = m.proprietaire_id || "";
+  form.batiment_id.value = m.batiment_id || "";
+  form.nom_logement.value = m.nom_logement || "";
   form.nb_pieces.value = m.nb_pieces;
   form.loyer_reference.value = m.loyer_reference;
   form.statut.value = m.statut;
   document.getElementById("maison-edit-id").value = m.id;
-  document.getElementById("maison-form-title").textContent = `Modifier — ${m.adresse}`;
+  document.getElementById("maison-form-title").textContent = `Modifier — ${m.nom_logement || m.adresse}`;
   document.getElementById("maison-submit-btn").textContent = "Enregistrer les modifications";
   document.getElementById("maison-cancel-btn").classList.remove("hidden");
   document.getElementById("view-maisons").scrollIntoView({ behavior: "smooth", block: "start" });
@@ -1028,21 +1132,26 @@ function annulerEditMaison() {
   const form = document.getElementById("form-maison");
   form.reset();
   document.getElementById("maison-edit-id").value = "";
-  document.getElementById("maison-form-title").textContent = "Nouvelle maison";
+  document.getElementById("maison-form-title").textContent = "Nouveau logement";
   document.getElementById("maison-submit-btn").textContent = "Ajouter";
   document.getElementById("maison-cancel-btn").classList.add("hidden");
 }
 
+function batimentNom(id) { return (CACHE.batiments.find(b => b.id === id) || {}).nom || "—"; }
+
 function renderMaisons() {
   document.getElementById("maisons-list").innerHTML = CACHE.maisons.map(m => `
     <tr>
-      <td>${m.adresse}</td><td>${m.proprietaire || proprietaireNom(m.proprietaire_id) || "—"}</td><td>${m.nb_pieces}</td>
+      <td>${batimentNom(m.batiment_id)}</td>
+      <td>${m.nom_logement || "<span class='muted'>(sans nom)</span>"}</td>
+      <td>${m.proprietaire || proprietaireNom(m.proprietaire_id) || "—"}</td>
+      <td>${m.nb_pieces}</td>
       <td>${m.loyer_reference}</td><td>${badge(m.statut)}</td>
       <td class="actions-row gerant-only ${ME && ME.role !== 'gerant' ? 'hidden' : ''}">
         <button class="secondary" onclick='editMaison(${JSON.stringify(m).replace(/'/g, "&apos;")})'>Modifier</button>
         <button class="danger" onclick="deleteItem('maisons', ${m.id})">Suppr.</button>
       </td>
-    </tr>`).join("") || `<tr><td colspan="6" class="empty-note">Aucune maison</td></tr>`;
+    </tr>`).join("") || `<tr><td colspan="7" class="empty-note">Aucun logement</td></tr>`;
 }
 
 // ---------- Locataires ----------
@@ -1828,10 +1937,29 @@ async function genererBilan() {
 
 // ---------- Selecteurs ----------
 function fillSelectors() {
-  const maisonOptions = CACHE.maisons.map(m => `<option value="${m.id}">${m.adresse}</option>`).join("");
+  const maisonLabel = (m) => {
+    const bat = (CACHE.batiments || []).find(b => b.id === m.batiment_id);
+    const base = bat ? bat.nom : m.adresse;
+    return m.nom_logement ? `${base} — ${m.nom_logement}` : base;
+  };
+  const maisonOptions = CACHE.maisons.map(m => `<option value="${m.id}">${maisonLabel(m)}</option>`).join("");
+  const batimentOptions = (CACHE.batiments || []).map(b => `<option value="${b.id}">${b.nom} (${b.adresse})</option>`).join("");
   const locataireOptions = CACHE.locataires.filter(l => !l.archive).map(l => `<option value="${l.id}">${l.nom}</option>`).join("");
   const bailOptions = CACHE.baux.filter(b => b.statut === "actif").map(b => `<option value="${b.id}">#${b.id} — ${maisonAdresse(b.maison_id)} / ${locataireNom(b.locataire_id)}</option>`).join("");
   const proprietaireOptions = CACHE.users.filter(u => u.role === "proprietaire").map(u => `<option value="${u.id}">${u.nom}</option>`).join("");
+
+  const maisonBatiment = document.getElementById("maison-batiment-select");
+  if (maisonBatiment) {
+    const val = maisonBatiment.value;
+    maisonBatiment.innerHTML = `<option value="">— Choisir un bâtiment —</option>` + batimentOptions;
+    maisonBatiment.value = val;
+  }
+  const batimentProprietaire = document.getElementById("batiment-proprietaire-select");
+  if (batimentProprietaire) {
+    const val = batimentProprietaire.value;
+    batimentProprietaire.innerHTML = `<option value="">— Aucun —</option>` + proprietaireOptions;
+    batimentProprietaire.value = val;
+  }
 
   const bailMaison = document.getElementById("bail-maison-select");
   const bailLocataire = document.getElementById("bail-locataire-select");
