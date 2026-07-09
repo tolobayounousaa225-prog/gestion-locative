@@ -28,22 +28,6 @@
   }
   a { color: inherit; }
 
-  /* ---------- TOASTS ---------- */
-  #toast-container {
-    position: fixed; top: 128px; right: 18px; z-index: 9999;
-    display: flex; flex-direction: column; gap: 10px; max-width: 360px;
-  }
-  .toast {
-    background: var(--navy); color: #fff; padding: 12px 16px; border-radius: 10px;
-    font-size: 13.5px; line-height: 1.4; box-shadow: 0 10px 30px rgba(0,0,0,.25);
-    opacity: 0; transform: translateX(30px); transition: opacity .25s ease, transform .25s ease;
-    border-left: 4px solid var(--gold);
-  }
-  .toast.show { opacity: 1; transform: translateX(0); }
-  .toast.toast-success { border-left-color: var(--ok); }
-  .toast.toast-error { border-left-color: var(--danger); }
-  .toast.toast-info { border-left-color: var(--gold); }
-
   /* ---------- LOGIN ---------- */
   #login-screen {
     display: flex; align-items: center; justify-content: center; min-height: 100vh;
@@ -144,20 +128,6 @@
   .card .value { font-size: 26px; font-weight: 800; color: var(--navy); }
   .card .label { font-size: 12px; color: var(--muted); margin-top: 4px; }
 
-  .card.kpi { display: flex; align-items: center; gap: 14px; }
-  .kpi-icon {
-    width: 44px; height: 44px; border-radius: 12px; flex-shrink: 0;
-    display: flex; align-items: center; justify-content: center; font-size: 20px;
-  }
-  .kpi-navy { border-top-color: var(--navy); } .kpi-navy .kpi-icon { background: rgba(18,49,79,.10); }
-  .kpi-gold { border-top-color: var(--gold); } .kpi-gold .kpi-icon { background: rgba(201,162,39,.15); }
-  .kpi-green { border-top-color: var(--ok); } .kpi-green .kpi-icon { background: rgba(22,163,74,.12); }
-  .kpi-red { border-top-color: var(--danger); } .kpi-red .kpi-icon { background: rgba(220,38,38,.12); }
-  .kpi-blue { border-top-color: #3b82f6; } .kpi-blue .kpi-icon { background: rgba(59,130,246,.12); }
-  .kpi-trend { font-size: 11px; font-weight: 700; margin-top: 3px; }
-  .kpi-trend.up { color: var(--ok); }
-  .kpi-trend.down { color: var(--danger); }
-
   .panel { background: var(--card); border-radius: 12px; padding: 20px; box-shadow: 0 1px 4px rgba(18,49,79,.08); margin-bottom: 20px; }
   .panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
   .panel-header strong { color: var(--navy); font-size: 14.5px; }
@@ -169,7 +139,7 @@
   .badge.occupee, .badge.actif, .badge.paye, .badge.resolu, .badge.gerant { background: #dcfce7; color: var(--ok); }
   .badge.libre, .badge.en_attente, .badge.ouvert, .badge.proprietaire { background: #fef3c7; color: var(--warn); }
   .badge.travaux, .badge.resilie, .badge.en_retard { background: #fee2e2; color: var(--danger); }
-  .badge.en_cours, .badge.partiel, .badge.locataire { background: #dbeafe; color: var(--primary); }
+  .badge.en_cours, .badge.partiel { background: #dbeafe; color: var(--primary); }
 
   .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   .actions-row { display: flex; gap: 6px; }
@@ -189,11 +159,13 @@
     background: var(--danger); color: #fff; font-size: 10px; font-weight: 800; line-height: 16px; text-align: center;
   }
 
-  /* ---------- Évolution (graphique SVG) ---------- */
-  .evolution-chart { padding: 6px 4px 0; }
-  .evolution-legend { display: flex; gap: 18px; font-size: 12px; color: var(--muted); margin-top: 8px; }
-  .evolution-legend span { display: inline-flex; align-items: center; gap: 6px; }
-  .evolution-legend .swatch { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+  /* ---------- Évolution (graphique en barres) ---------- */
+  .evolution-chart { display: flex; align-items: flex-end; gap: 14px; height: 160px; padding: 10px 4px 0; }
+  .evolution-bar-wrap { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; }
+  .evolution-bar { width: 60%; max-width: 42px; background: linear-gradient(180deg, var(--gold), #a8811c); border-radius: 6px 6px 0 0; transition: height .3s ease; position: relative; }
+  .evolution-bar.low { background: linear-gradient(180deg, #f2b6b6, var(--danger)); }
+  .evolution-bar-pct { font-size: 11px; font-weight: 700; color: var(--navy); margin-bottom: 4px; }
+  .evolution-bar-label { font-size: 10.5px; color: var(--muted); margin-top: 6px; }
 
   /* ---------- Observations / messages ---------- */
   .obs-item { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; }
@@ -221,17 +193,11 @@
     body * { visibility: hidden; }
     #view-bilan, #view-bilan * { visibility: visible; }
     #view-bilan { position: absolute; left: 0; top: 0; width: 100%; padding: 10px; }
-    body.print-locataires #view-locataires, body.print-locataires #view-locataires * { visibility: visible; }
-    body.print-locataires #view-locataires { display: block !important; position: absolute; left: 0; top: 0; width: 100%; padding: 10px; }
-    body.print-depenses #view-depenses, body.print-depenses #view-depenses * { visibility: visible; }
-    body.print-depenses #view-depenses { display: block !important; position: absolute; left: 0; top: 0; width: 100%; padding: 10px; }
     .no-print { display: none !important; }
   }
 </style>
 </head>
 <body>
-
-<div id="toast-container"></div>
 
 <!-- ================= LOGIN ================= -->
 <div id="login-screen">
@@ -300,30 +266,21 @@
     </div>
   </header>
   <nav id="main-nav">
-    <button data-view="mon-espace" id="nav-mon-espace" class="hidden">🏡 Mon espace</button>
-    <button data-view="dashboard" class="active not-locataire">📊 Tableau de bord</button>
-    <button data-view="maisons" class="not-locataire">🏠 Maisons</button>
-    <button data-view="locataires" class="not-locataire">👥 Locataires</button>
-    <button data-view="baux" class="not-locataire">📃 Baux</button>
-    <button data-view="paiements" class="not-locataire">💰 Paiements</button>
-    <button data-view="rappels" id="nav-rappels" class="hidden not-locataire">🔔 Rappels</button>
-    <button data-view="tickets" class="not-locataire">🔧 Maintenance</button>
-    <button data-view="depenses" id="nav-depenses" class="hidden not-locataire">💸 Dépenses</button>
+    <button data-view="dashboard" class="active">📊 Tableau de bord</button>
+    <button data-view="maisons">🏠 Maisons</button>
+    <button data-view="locataires">👥 Locataires</button>
+    <button data-view="baux">📃 Baux</button>
+    <button data-view="paiements">💰 Paiements</button>
+    <button data-view="tickets">🔧 Maintenance</button>
+    <button data-view="depenses" id="nav-depenses" class="hidden">💸 Dépenses</button>
+    <button data-view="pieces">🧾 Pièces justif.</button>
     <button data-view="observations">✉️ Observations<span id="obs-badge" class="nav-badge hidden">0</span></button>
-    <button data-view="bilan" id="nav-bilan" class="hidden not-locataire">📈 Bilan</button>
-    <button data-view="historique" class="not-locataire">🗂️ Historique</button>
-    <button data-view="utilisateurs" id="nav-utilisateurs" class="hidden not-locataire">🔑 Utilisateurs</button>
-    <button data-view="audit" id="nav-audit" class="hidden not-locataire">🛡️ Journal de connexion</button>
-    <button data-view="mon-profil">👤 Mon profil</button>
+    <button data-view="bilan" id="nav-bilan" class="hidden">📈 Bilan</button>
+    <button data-view="historique">🗂️ Historique</button>
+    <button data-view="utilisateurs" id="nav-utilisateurs" class="hidden">🔑 Utilisateurs</button>
   </nav>
 
   <main>
-    <!-- MON ESPACE (locataire) -->
-    <section class="view" id="view-mon-espace">
-      <div class="page-title"><div class="bar"></div><h2>Mon espace</h2></div>
-      <div id="mon-espace-content"></div>
-    </section>
-
     <!-- DASHBOARD -->
     <section class="view active" id="view-dashboard">
       <div class="page-title"><div class="bar"></div><h2>Tableau de bord</h2></div>
@@ -371,13 +328,12 @@
     <!-- LOCATAIRES -->
     <section class="view" id="view-locataires">
       <div class="page-title"><div class="bar"></div><h2>Locataires</h2></div>
-      <div class="panel gerant-only no-print">
+      <div class="panel gerant-only">
         <div class="panel-header"><strong id="locataire-form-title">Nouveau locataire</strong></div>
         <form id="form-locataire" class="form-grid">
           <input type="hidden" name="edit_id" id="locataire-edit-id">
           <div><label>Nom</label><input name="nom" required></div>
           <div><label>Téléphone</label><input name="telephone"></div>
-          <div><label>Email</label><input name="email" type="email"></div>
           <div><label>Pièce d'identité</label><input name="piece_identite"></div>
           <div><label>Contact d'urgence</label><input name="contact_urgence"></div>
           <div style="align-self:end; display:flex; gap:6px;">
@@ -387,14 +343,8 @@
         </form>
       </div>
       <div class="panel">
-        <div class="panel-header" style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
-          <strong>Liste des locataires</strong>
-          <div style="display:flex; gap:8px;">
-            <button type="button" class="secondary" onclick="imprimerLocataires()">🖨️ Imprimer</button>
-            <button type="button" class="secondary" onclick="telechargerLocatairesPdf()">⬇️ Télécharger PDF</button>
-          </div>
-        </div>
-        <table id="table-locataires"><thead><tr><th>Nom</th><th>Téléphone</th><th>Email</th><th>Pièce ID</th><th>Contact urgence</th><th class="no-print gerant-only"></th></tr></thead>
+        <div class="panel-header"><strong>Liste des locataires</strong></div>
+        <table><thead><tr><th>Nom</th><th>Téléphone</th><th>Pièce ID</th><th>Contact urgence</th><th></th></tr></thead>
           <tbody id="locataires-list"></tbody>
         </table>
       </div>
@@ -427,14 +377,6 @@
     <section class="view" id="view-paiements">
       <div class="page-title"><div class="bar"></div><h2>Paiements</h2></div>
       <div class="panel gerant-only">
-        <div class="panel-header" style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
-          <strong>Échéancier mensuel</strong>
-          <button type="button" class="secondary" onclick="genererEcheancierMois()">📅 Générer l'échéancier du mois</button>
-        </div>
-        <div style="font-size:12.5px; color:var(--muted);">Crée automatiquement un paiement « en attente » pour chaque bail actif du mois courant qui n'en a pas encore.</div>
-        <div id="echeancier-msg" style="margin-top:8px;"></div>
-      </div>
-      <div class="panel gerant-only">
         <div class="panel-header"><strong>Enregistrer un encaissement</strong></div>
         <form id="form-paiement" class="form-grid">
           <div><label>Bail</label><select name="bail_id" id="paiement-bail-select" required></select></div>
@@ -457,22 +399,6 @@
           <tbody id="paiements-list"></tbody>
         </table>
         <div class="empty-note" id="paiements-empty-note">Choisissez une maison ci-dessus pour afficher son historique de paiements.</div>
-      </div>
-    </section>
-
-    <!-- RAPPELS D'IMPAYÉS -->
-    <section class="view" id="view-rappels">
-      <div class="page-title"><div class="bar"></div><h2>Rappels d'impayés</h2></div>
-      <div class="panel">
-        <div class="panel-header" style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
-          <strong>Baux impayés du mois en cours</strong>
-          <button type="button" onclick="envoyerRappelsEmail()">✉️ Envoyer les rappels par email</button>
-        </div>
-        <div id="rappels-email-status" style="font-size:12.5px; color:var(--muted); margin-bottom:10px;"></div>
-        <div id="rappels-msg"></div>
-        <table><thead><tr><th>Locataire</th><th>Maison</th><th>Loyer</th><th>Email</th><th>Téléphone</th><th></th></tr></thead>
-          <tbody id="rappels-list"></tbody>
-        </table>
       </div>
     </section>
 
@@ -500,7 +426,7 @@
     <!-- DEPENSES -->
     <section class="view" id="view-depenses">
       <div class="page-title"><div class="bar"></div><h2>Dépenses</h2></div>
-      <div class="panel gerant-only no-print">
+      <div class="panel gerant-only">
         <div class="panel-header"><strong>Nouvelle dépense</strong></div>
         <form id="form-depense" class="form-grid">
           <div>
@@ -516,19 +442,40 @@
           <div><label>Libellé</label><input name="libelle" required></div>
           <div><label>Montant</label><input name="montant" type="number" step="0.01" required></div>
           <div><label>Date</label><input name="date_depense" type="date" required></div>
+          <div><label>Maison concernée (optionnel)</label><select name="maison_id" id="depense-maison-select"><option value="">— Générale (tout le parc) —</option></select></div>
           <div style="align-self:end"><button type="submit">Ajouter</button></div>
         </form>
       </div>
       <div class="panel">
-        <div class="panel-header" style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
-          <strong>Historique des dépenses</strong>
-          <div style="display:flex; gap:8px;">
-            <button type="button" class="secondary" onclick="imprimerDepenses()">🖨️ Imprimer</button>
-            <button type="button" class="secondary" onclick="telechargerDepensesPdf()">⬇️ Télécharger PDF</button>
-          </div>
-        </div>
-        <table><thead><tr><th>Date</th><th>Catégorie</th><th>Libellé</th><th>Montant</th><th class="no-print"></th></tr></thead>
+        <div class="panel-header"><strong>Historique des dépenses</strong></div>
+        <table><thead><tr><th>Date</th><th>Catégorie</th><th>Libellé</th><th>Maison</th><th>Montant</th><th></th></tr></thead>
           <tbody id="depenses-list"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- PIECES JUSTIFICATIVES -->
+    <section class="view" id="view-pieces">
+      <div class="page-title"><div class="bar"></div><h2>Pièces justificatives</h2></div>
+      <div class="panel gerant-only">
+        <div class="panel-header"><strong>Téléverser une pièce (facture, reçu, photo d'achat...)</strong></div>
+        <form id="form-piece" class="form-grid">
+          <div><label>Titre</label><input name="titre" required placeholder="Ex : Facture ciment"></div>
+          <div><label>Maison concernée</label><select name="maison_id" id="piece-maison-select"><option value="">— Document général (gérant seul) —</option></select></div>
+          <div><label>Montant (optionnel)</label><input name="montant" type="number" step="0.01" placeholder="Ex : 25000"></div>
+          <div><label>Fichier (PDF ou image, max 10 Mo)</label><input name="fichier" type="file" accept="application/pdf,image/jpeg,image/png,image/webp,image/gif" required></div>
+          <div style="grid-column:1/-1"><label>Description (optionnel)</label><input name="description" placeholder="Détail de l'achat ou des travaux..."></div>
+          <div style="align-self:end"><button type="submit" id="piece-submit-btn">Téléverser</button></div>
+        </form>
+        <div class="empty-note" id="piece-upload-status"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-header">
+          <strong id="pieces-title">Documents</strong>
+          <select id="pieces-maison-filtre" style="max-width:260px"><option value="">Toutes les maisons</option></select>
+        </div>
+        <table><thead><tr><th>Date</th><th>Titre</th><th>Maison</th><th>Montant</th><th>Fichier</th><th></th></tr></thead>
+          <tbody id="pieces-list"></tbody>
         </table>
       </div>
     </section>
@@ -556,10 +503,9 @@
       <div class="panel no-print">
         <div class="bilan-toolbar">
           <div><label>Mois</label><input type="month" id="bilan-mois-input"></div>
+          <div><label>Périmètre</label><select id="bilan-maison-select"><option value="">Toutes les maisons</option></select></div>
           <div><button type="button" onclick="genererBilan()">Générer le bilan</button></div>
           <div><button type="button" class="secondary" id="bilan-print-btn" onclick="window.print()" disabled>🖨️ Imprimer</button></div>
-          <div><button type="button" class="secondary" id="bilan-pdf-btn" onclick="telechargerBilanPdf()" disabled>⬇️ PDF</button></div>
-          <div><button type="button" class="secondary" id="bilan-excel-btn" onclick="telechargerBilanExcel()" disabled>⬇️ Excel</button></div>
         </div>
         <div class="empty-note" id="bilan-loading"></div>
       </div>
@@ -593,61 +539,29 @@
       </div>
     </section>
 
-    <!-- MON PROFIL (tous rôles) -->
-    <section class="view" id="view-mon-profil">
-      <div class="page-title"><div class="bar"></div><h2>Mon profil</h2></div>
-      <div class="panel">
-        <div class="panel-header"><strong>Mes informations</strong></div>
-        <form id="form-mon-profil" class="form-grid">
-          <div><label>Nom</label><input name="nom" id="profil-nom" required></div>
-          <div><label>Email</label><input name="email" type="email" id="profil-email" required></div>
-          <div><label>Mot de passe actuel</label><input name="current_password" type="password" id="profil-current-password" autocomplete="current-password"></div>
-          <div><label>Nouveau mot de passe (optionnel)</label><input name="new_password" type="password" id="profil-new-password" minlength="4" autocomplete="new-password"></div>
-          <div style="align-self:end"><button type="submit">Enregistrer</button></div>
-        </form>
-        <div style="font-size:12.5px; color:var(--muted); margin-top:6px;">Le mot de passe actuel n'est requis que si vous modifiez l'email ou le mot de passe. Si vous changez d'email, vous devrez vous reconnecter.</div>
-        <div id="profil-msg" style="margin-top:10px;"></div>
-      </div>
-    </section>
-
     <!-- UTILISATEURS -->
     <section class="view" id="view-utilisateurs">
       <div class="page-title"><div class="bar"></div><h2>Utilisateurs</h2></div>
       <div class="panel">
-        <div class="panel-header"><strong>Créer un compte</strong></div>
+        <div class="panel-header"><strong id="user-form-title">Créer un compte propriétaire</strong></div>
         <form id="form-user" class="form-grid">
-          <div><label>Rôle</label>
-            <select name="role" id="user-role-select">
-              <option value="proprietaire">Propriétaire</option>
-              <option value="gerant">Gérant</option>
-              <option value="locataire">Locataire</option>
-            </select>
-          </div>
-          <div id="user-nom-field"><label>Nom</label><input name="nom" required></div>
-          <div id="user-locataire-field" class="hidden">
-            <label>Locataire associé</label>
-            <select name="locataire_id" id="user-locataire-select"><option value="">— Sélectionnez un locataire —</option></select>
-          </div>
+          <input type="hidden" id="user-edit-id" value="">
+          <div><label>Nom</label><input name="nom" required></div>
           <div><label>Email</label><input name="email" type="email" required></div>
-          <div><label>Mot de passe</label><input name="password" type="password" required></div>
-          <div style="align-self:end"><button type="submit">Créer le compte</button></div>
+          <div><label id="user-password-label">Mot de passe</label><input name="password" type="password" required minlength="6"></div>
+          <div><label>Rôle</label>
+            <select name="role"><option value="proprietaire">Propriétaire</option><option value="gerant">Gérant</option></select>
+          </div>
+          <div style="align-self:end">
+            <button type="submit" id="user-submit-btn">Créer le compte</button>
+            <button type="button" class="secondary hidden" id="user-cancel-btn" onclick="annulerEditionUser()">Annuler</button>
+          </div>
         </form>
       </div>
       <div class="panel">
         <div class="panel-header"><strong>Comptes existants</strong></div>
         <table><thead><tr><th>Nom</th><th>Email</th><th>Rôle</th><th></th></tr></thead>
           <tbody id="users-list"></tbody>
-        </table>
-      </div>
-    </section>
-
-    <!-- AUDIT / JOURNAL DE CONNEXION -->
-    <section class="view" id="view-audit">
-      <div class="page-title"><div class="bar"></div><h2>Journal de connexion</h2></div>
-      <div class="panel">
-        <div class="panel-header"><strong>Dernières tentatives de connexion (200 max)</strong></div>
-        <table><thead><tr><th>Date</th><th>Email</th><th>Résultat</th><th>IP</th><th>Navigateur</th></tr></thead>
-          <tbody id="audit-list"></tbody>
         </table>
       </div>
     </section>
@@ -663,32 +577,6 @@ const API = "/api";
 let TOKEN = localStorage.getItem("gl_token") || null;
 let ME = null;
 let CACHE = { maisons: [], locataires: [], baux: [], paiements: [], tickets: [], users: [], depenses: [], observations: [] };
-
-// ---------- Échappement HTML (contenu saisi par l'utilisateur) ----------
-function escapeHtml(value) {
-  if (value === null || value === undefined) return "";
-  return String(value)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-}
-
-// ---------- Toasts ----------
-function toast(message, type = "info", duration = 4000) {
-  const container = document.getElementById("toast-container");
-  if (!container) return;
-  const el = document.createElement("div");
-  el.className = `toast toast-${type}`;
-  el.textContent = message;
-  container.appendChild(el);
-  requestAnimationFrame(() => el.classList.add("show"));
-  setTimeout(() => {
-    el.classList.remove("show");
-    setTimeout(() => el.remove(), 300);
-  }, duration);
-}
 
 // ---------- Auth ----------
 function authHeaders(extra = {}) {
@@ -766,20 +654,13 @@ document.getElementById("forgot-submit-btn").addEventListener("click", async () 
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.detail || "Erreur lors de la génération du lien.");
-    if (data.envoye) {
-      resultBox.innerHTML = `
-        <div style="background:#dcfce7; color:var(--ok); padding:10px 12px; border-radius:8px; font-size:13px; margin-bottom:10px;">
-          ✓ ${data.message} Vérifiez votre boîte de réception.
-        </div>`;
-    } else {
-      resultBox.innerHTML = `
-        <div style="background:#dcfce7; color:var(--ok); padding:10px 12px; border-radius:8px; font-size:13px; margin-bottom:10px;">
-          Lien généré (valable 1 heure). Copiez-le et ouvrez-le pour définir un nouveau mot de passe :
-        </div>
-        <div style="word-break:break-all; background:#fbfcfd; border:1.5px solid var(--border); border-radius:8px; padding:10px 12px; font-size:12.5px; margin-bottom:10px;">
-          <a href="${data.reset_url}" target="_blank">${data.reset_url}</a>
-        </div>`;
-    }
+    resultBox.innerHTML = `
+      <div style="background:#dcfce7; color:var(--ok); padding:10px 12px; border-radius:8px; font-size:13px; margin-bottom:10px;">
+        Lien généré (valable 1 heure). Copiez-le et ouvrez-le pour définir un nouveau mot de passe :
+      </div>
+      <div style="word-break:break-all; background:#fbfcfd; border:1.5px solid var(--border); border-radius:8px; padding:10px 12px; font-size:12.5px; margin-bottom:10px;">
+        <a href="${data.reset_url}" target="_blank">${data.reset_url}</a>
+      </div>`;
   } catch (err) {
     errBox.textContent = err.message;
     errBox.classList.remove("hidden");
@@ -802,27 +683,16 @@ async function showApp() {
 
   document.getElementById("user-nom").textContent = ME.nom;
   const roleTag = document.getElementById("user-role");
-  const roleLabels = { gerant: "Gérant", proprietaire: "Propriétaire", locataire: "Locataire" };
-  roleTag.textContent = roleLabels[ME.role] || ME.role;
+  roleTag.textContent = ME.role === "gerant" ? "Gérant" : "Propriétaire";
   roleTag.className = "role-tag badge " + ME.role;
 
-  const profilNom = document.getElementById("profil-nom");
-  const profilEmail = document.getElementById("profil-email");
-  if (profilNom) profilNom.value = ME.nom;
-  if (profilEmail) profilEmail.value = ME.email;
-
   const isGerant = ME.role === "gerant";
-  const isLocataire = ME.role === "locataire";
   document.querySelectorAll(".gerant-only").forEach(el => el.classList.toggle("hidden", !isGerant));
   document.querySelectorAll(".proprietaire-only").forEach(el => el.classList.toggle("hidden", isGerant));
-  document.querySelectorAll(".not-locataire").forEach(el => el.classList.toggle("hidden", isLocataire));
-  document.getElementById("nav-mon-espace").classList.toggle("hidden", !isLocataire);
   document.getElementById("nav-utilisateurs").classList.toggle("hidden", !isGerant);
   document.getElementById("nav-depenses").classList.toggle("hidden", !isGerant);
   document.getElementById("nav-bilan").classList.toggle("hidden", !isGerant);
-  document.getElementById("nav-rappels").classList.toggle("hidden", !isGerant);
-  document.getElementById("nav-audit").classList.toggle("hidden", !isGerant);
-  document.getElementById("observations-title").textContent = isGerant ? "Boîte à messages" : (isLocataire ? "Écrire au gérant" : "Mes observations");
+  document.getElementById("observations-title").textContent = isGerant ? "Boîte à messages" : "Mes observations";
 
   const bilanInput = document.getElementById("bilan-mois-input");
   if (bilanInput && !bilanInput.value) {
@@ -830,8 +700,8 @@ async function showApp() {
     bilanInput.value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
   }
 
-  showView(isLocataire ? "mon-espace" : "dashboard");
   await refreshAll();
+  showView("dashboard");
 }
 
 // ---------- Navigation ----------
@@ -846,9 +716,6 @@ function showView(name) {
   document.querySelectorAll(".view").forEach(v => v.classList.toggle("active", v.id === "view-" + name));
   if (name === "dashboard") renderDashboard();
   if (name === "historique") chargerHistorique();
-  if (name === "rappels") chargerRappels();
-  if (name === "audit") chargerAudit();
-  if (name === "mon-espace") renderMonEspace();
 }
 
 // ---------- Data loading ----------
@@ -856,13 +723,12 @@ async function refreshAll() {
   const isGerant = ME && ME.role === "gerant";
   const calls = [
     apiFetch("/maisons"), apiFetch("/locataires"), apiFetch("/baux"), apiFetch("/paiements"), apiFetch("/tickets"),
-    apiFetch("/observations"),
+    apiFetch("/observations"), apiFetch("/pieces"),
   ];
   if (isGerant) { calls.push(apiFetch("/users")); calls.push(apiFetch("/depenses")); }
-  const [maisons, locataires, baux, paiements, tickets, observations, users, depenses] = await Promise.all(calls);
-  CACHE = { maisons, locataires, baux, paiements, tickets, users: users || [], depenses: depenses || [], observations: observations || [] };
+  const [maisons, locataires, baux, paiements, tickets, observations, pieces, users, depenses] = await Promise.all(calls);
+  CACHE = { maisons, locataires, baux, paiements, tickets, users: users || [], depenses: depenses || [], observations: observations || [], pieces: pieces || [] };
   if (document.getElementById("view-dashboard").classList.contains("active")) renderDashboard();
-  if (document.getElementById("view-mon-espace").classList.contains("active")) renderMonEspace();
   renderMaisons();
   renderLocataires();
   renderBaux();
@@ -870,87 +736,55 @@ async function refreshAll() {
   renderTickets();
   renderUsers();
   renderDepenses();
+  renderPieces();
   renderObservations();
   fillSelectors();
 }
 
 function badge(text) { return `<span class="badge ${text}">${text.replace("_", " ")}</span>`; }
-function maisonAdresse(id) { return escapeHtml(CACHE.maisons.find(m => m.id === id)?.adresse || "—"); }
-function locataireNom(id) { return escapeHtml(CACHE.locataires.find(l => l.id === id)?.nom || "—"); }
-function proprietaireNom(id) { return escapeHtml(CACHE.users.find(u => u.id === id)?.nom || ""); }
+function maisonAdresse(id) { return CACHE.maisons.find(m => m.id === id)?.adresse || "—"; }
+function locataireNom(id) { return CACHE.locataires.find(l => l.id === id)?.nom || "—"; }
+function proprietaireNom(id) { return CACHE.users.find(u => u.id === id)?.nom || ""; }
 
 // ---------- Dashboard ----------
 async function renderDashboard() {
   const d = await apiFetch("/dashboard");
-  const evolution = await apiFetch("/dashboard/evolution?mois=6").catch(() => []);
-
-  const moisPrec = evolution.length >= 2 ? evolution[evolution.length - 2] : null;
-  let trendHtml = "";
-  if (moisPrec && moisPrec.total_encaisse) {
-    const variation = Math.round((d.total_encaisse - moisPrec.total_encaisse) / moisPrec.total_encaisse * 100);
-    trendHtml = `<div class="kpi-trend ${variation >= 0 ? 'up' : 'down'}">${variation >= 0 ? '▲' : '▼'} ${Math.abs(variation)}% vs mois dernier</div>`;
-  }
-
   document.getElementById("dashboard-cards").innerHTML = `
-    <div class="card kpi kpi-navy"><div class="kpi-icon">🏠</div><div class="kpi-body"><div class="value">${d.total_maisons}</div><div class="label">Maisons</div></div></div>
-    <div class="card kpi kpi-blue"><div class="kpi-icon">📊</div><div class="kpi-body"><div class="value">${d.taux_occupation}%</div><div class="label">Taux d'occupation</div></div></div>
-    <div class="card kpi kpi-gold"><div class="kpi-icon">🧾</div><div class="kpi-body"><div class="value">${d.total_attendu}</div><div class="label">Loyers attendus (${d.mois})</div></div></div>
-    <div class="card kpi kpi-green"><div class="kpi-icon">💰</div><div class="kpi-body"><div class="value">${d.total_encaisse}</div><div class="label">Loyers encaissés</div>${trendHtml}</div></div>
-    <div class="card kpi kpi-red"><div class="kpi-icon">⚠️</div><div class="kpi-body"><div class="value">${d.nombre_impayes}</div><div class="label">Impayés</div></div></div>
-    <div class="card kpi kpi-navy"><div class="kpi-icon">🔧</div><div class="kpi-body"><div class="value">${d.tickets_ouverts}</div><div class="label">Tickets ouverts</div></div></div>
+    <div class="card"><div class="value">${d.total_maisons}</div><div class="label">🏠 Maisons</div></div>
+    <div class="card"><div class="value">${d.taux_occupation}%</div><div class="label">Taux d'occupation</div></div>
+    <div class="card"><div class="value">${d.total_attendu}</div><div class="label">Loyers attendus (${d.mois})</div></div>
+    <div class="card"><div class="value">${d.total_encaisse}</div><div class="label">💰 Loyers encaissés</div></div>
+    <div class="card"><div class="value">${d.nombre_impayes}</div><div class="label">⚠️ Impayés</div></div>
+    <div class="card"><div class="value">${d.tickets_ouverts}</div><div class="label">🔧 Tickets ouverts</div></div>
   `;
   document.getElementById("dashboard-impayes").innerHTML = d.impayes.map(i => `
     <tr><td>#${i.bail_id}</td><td>${maisonAdresse(i.maison_id)}</td><td>${i.loyer_mensuel}</td></tr>
   `).join("") || `<tr><td colspan="3" class="empty-note">Aucun impayé 🎉</td></tr>`;
 
-  renderEvolution(evolution);
+  renderEvolution();
 }
 
-function renderEvolution(data) {
+async function renderEvolution() {
   const el = document.getElementById("evolution-chart");
   if (!el) return;
-  if (!data || !data.length) {
+  try {
+    const data = await apiFetch("/dashboard/evolution?mois=6");
+    const moisLabels = { "01":"Jan","02":"Fév","03":"Mar","04":"Avr","05":"Mai","06":"Juin","07":"Juil","08":"Août","09":"Sep","10":"Oct","11":"Nov","12":"Déc" };
+    el.innerHTML = data.map(m => {
+      const [annee, mm] = m.mois.split("-");
+      const pct = Math.max(0, Math.min(100, m.taux_encaissement));
+      const hauteur = Math.max(6, pct);
+      const low = pct < 60 ? "low" : "";
+      return `
+        <div class="evolution-bar-wrap">
+          <div class="evolution-bar-pct">${m.taux_encaissement}%</div>
+          <div class="evolution-bar ${low}" style="height:${hauteur}%"></div>
+          <div class="evolution-bar-label">${moisLabels[mm] || mm} ${annee.slice(2)}</div>
+        </div>`;
+    }).join("");
+  } catch (err) {
     el.innerHTML = `<div class="empty-note">Évolution indisponible</div>`;
-    return;
   }
-
-  const moisLabels = { "01":"Jan","02":"Fév","03":"Mar","04":"Avr","05":"Mai","06":"Juin","07":"Juil","08":"Août","09":"Sep","10":"Oct","11":"Nov","12":"Déc" };
-  const width = 640, height = 220;
-  const padding = { top: 22, right: 10, bottom: 30, left: 10 };
-  const chartH = height - padding.top - padding.bottom;
-  const groupW = (width - padding.left - padding.right) / data.length;
-  const barW = Math.min(34, groupW * 0.3);
-  const maxVal = Math.max(1, ...data.flatMap(m => [m.total_attendu, m.total_encaisse]));
-
-  let bars = "";
-  data.forEach((m, i) => {
-    const [annee, mm] = m.mois.split("-");
-    const groupX = padding.left + i * groupW + groupW / 2;
-    const hAttendu = (m.total_attendu / maxVal) * chartH;
-    const hEncaisse = (m.total_encaisse / maxVal) * chartH;
-    const xAttendu = groupX - barW - 2;
-    const xEncaisse = groupX + 2;
-    const yAttendu = height - padding.bottom - hAttendu;
-    const yEncaisse = height - padding.bottom - hEncaisse;
-    const couleurEncaisse = m.taux_encaissement < 60 ? "#dc2626" : "#C9A227";
-    bars += `
-      <rect x="${xAttendu}" y="${yAttendu}" width="${barW}" height="${hAttendu}" rx="3" fill="#D6DCE3" />
-      <rect x="${xEncaisse}" y="${yEncaisse}" width="${barW}" height="${hEncaisse}" rx="3" fill="${couleurEncaisse}" />
-      <text x="${groupX}" y="${height - padding.bottom + 16}" text-anchor="middle" font-size="10" fill="#6B7280">${moisLabels[mm] || mm} ${annee.slice(2)}</text>
-      <text x="${xEncaisse + barW / 2}" y="${Math.max(padding.top - 4, yEncaisse - 6)}" text-anchor="middle" font-size="9.5" font-weight="700" fill="#12314F">${m.taux_encaissement}%</text>
-    `;
-  });
-
-  el.innerHTML = `
-    <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMid meet" style="width:100%; height:200px;">
-      <line x1="${padding.left}" y1="${height - padding.bottom}" x2="${width - padding.right}" y2="${height - padding.bottom}" stroke="#E2E6EB" stroke-width="1"/>
-      ${bars}
-    </svg>
-    <div class="evolution-legend">
-      <span><span class="swatch" style="background:#D6DCE3"></span>Loyers attendus</span>
-      <span><span class="swatch" style="background:#C9A227"></span>Loyers encaissés</span>
-      <span><span class="swatch" style="background:#dc2626"></span>Encaissement faible (&lt;60%)</span>
-    </div>`;
 }
 
 // ---------- Maisons ----------
@@ -973,7 +807,7 @@ document.getElementById("form-maison").addEventListener("submit", async (e) => {
     annulerEditMaison();
     await refreshAll();
   } catch (err) {
-    toast(err.message, "error");
+    alert(err.message);
   }
 });
 
@@ -1003,7 +837,7 @@ function annulerEditMaison() {
 function renderMaisons() {
   document.getElementById("maisons-list").innerHTML = CACHE.maisons.map(m => `
     <tr>
-      <td>${escapeHtml(m.adresse)}</td><td>${escapeHtml(m.proprietaire) || proprietaireNom(m.proprietaire_id) || "—"}</td><td>${m.nb_pieces}</td>
+      <td>${m.adresse}</td><td>${m.proprietaire || proprietaireNom(m.proprietaire_id) || "—"}</td><td>${m.nb_pieces}</td>
       <td>${m.loyer_reference}</td><td>${badge(m.statut)}</td>
       <td class="actions-row gerant-only ${ME && ME.role !== 'gerant' ? 'hidden' : ''}">
         <button class="secondary" onclick='editMaison(${JSON.stringify(m).replace(/'/g, "&apos;")})'>Modifier</button>
@@ -1018,7 +852,7 @@ document.getElementById("form-locataire").addEventListener("submit", async (e) =
   const f = new FormData(e.target);
   const editId = f.get("edit_id");
   const payload = {
-    nom: f.get("nom"), telephone: f.get("telephone") || null, email: f.get("email") || null,
+    nom: f.get("nom"), telephone: f.get("telephone") || null,
     piece_identite: f.get("piece_identite") || null, contact_urgence: f.get("contact_urgence") || null,
   };
   try {
@@ -1030,7 +864,7 @@ document.getElementById("form-locataire").addEventListener("submit", async (e) =
     annulerEditLocataire();
     await refreshAll();
   } catch (err) {
-    toast(err.message, "error");
+    alert(err.message);
   }
 });
 
@@ -1038,7 +872,6 @@ function editLocataire(l) {
   const form = document.getElementById("form-locataire");
   form.nom.value = l.nom || "";
   form.telephone.value = l.telephone || "";
-  form.email.value = l.email || "";
   form.piece_identite.value = l.piece_identite || "";
   form.contact_urgence.value = l.contact_urgence || "";
   document.getElementById("locataire-edit-id").value = l.id;
@@ -1061,37 +894,12 @@ function renderLocataires() {
   const actifs = CACHE.locataires.filter(l => !l.archive);
   document.getElementById("locataires-list").innerHTML = actifs.map(l => `
     <tr>
-      <td>${escapeHtml(l.nom)}</td><td>${escapeHtml(l.telephone) || "—"}</td><td>${escapeHtml(l.email) || "—"}</td><td>${escapeHtml(l.piece_identite) || "—"}</td><td>${escapeHtml(l.contact_urgence) || "—"}</td>
-      <td class="actions-row gerant-only no-print ${ME && ME.role !== 'gerant' ? 'hidden' : ''}">
+      <td>${l.nom}</td><td>${l.telephone || "—"}</td><td>${l.piece_identite || "—"}</td><td>${l.contact_urgence || "—"}</td>
+      <td class="actions-row gerant-only ${ME && ME.role !== 'gerant' ? 'hidden' : ''}">
         <button class="secondary" onclick='editLocataire(${JSON.stringify(l).replace(/'/g, "&apos;")})'>Modifier</button>
-        <button class="secondary" onclick="genererPortailLocataire(${l.id})">Portail</button>
-        <button class="secondary" onclick='creerAccesLocataire(${l.id}, ${JSON.stringify(l.nom).replace(/'/g, "&apos;")}, ${JSON.stringify(l.email || "").replace(/'/g, "&apos;")})'>🔑 Créer un accès</button>
         <button class="danger" onclick="deleteItem('locataires', ${l.id})">Suppr.</button>
       </td>
-    </tr>`).join("") || `<tr><td colspan="6" class="empty-note">Aucun locataire</td></tr>`;
-}
-
-async function genererPortailLocataire(id) {
-  try {
-    const data = await apiFetch(`/locataires/${id}/portail-token`, { method: "POST" });
-    await navigator.clipboard.writeText(data.portail_url).catch(() => {});
-    prompt("Lien du portail locataire (copié dans le presse-papiers si autorisé) :", data.portail_url);
-  } catch (err) {
-    toast(err.message, "error");
-  }
-}
-
-async function creerAccesLocataire(id, nom, emailActuel) {
-  const email = prompt(`Email de connexion pour ${nom} :`, emailActuel || "");
-  if (!email) return;
-  const password = prompt(`Mot de passe pour ${nom} (au moins 4 caractères) :`);
-  if (!password) return;
-  try {
-    const compte = await apiFetch(`/locataires/${id}/compte`, { method: "POST", body: JSON.stringify({ email, password }) });
-    alert(`Accès créé pour ${compte.nom} — communiquez-lui ces identifiants :\nEmail : ${compte.email}\nMot de passe : ${password}`);
-  } catch (err) {
-    toast(err.message, "error");
-  }
+    </tr>`).join("") || `<tr><td colspan="5" class="empty-note">Aucun locataire</td></tr>`;
 }
 
 // ---------- Baux ----------
@@ -1107,7 +915,7 @@ document.getElementById("form-bail").addEventListener("submit", async (e) => {
     e.target.reset();
     await refreshAll();
   } catch (err) {
-    toast(err.message, "error");
+    alert(err.message);
   }
 });
 
@@ -1131,23 +939,11 @@ async function resilierBail(id) {
     await apiFetch(`/baux/${id}`, { method: "PUT", body: JSON.stringify({ ...bail, statut: "resilie" }) });
     await refreshAll();
   } catch (err) {
-    toast(err.message, "error");
+    alert(err.message);
   }
 }
 
 // ---------- Paiements ----------
-async function genererEcheancierMois() {
-  const msgBox = document.getElementById("echeancier-msg");
-  msgBox.innerHTML = "";
-  try {
-    const data = await apiFetch("/paiements/generer-echeancier", { method: "POST" });
-    msgBox.innerHTML = `<div style="background:#dcfce7; color:#16a34a; padding:8px 10px; border-radius:8px; font-size:13px;">✓ ${data.paiements_crees} paiement(s) créé(s) pour ${data.mois}.</div>`;
-    await refreshAll();
-  } catch (err) {
-    msgBox.innerHTML = `<div class="error">${err.message}</div>`;
-  }
-}
-
 document.getElementById("form-paiement").addEventListener("submit", async (e) => {
   e.preventDefault();
   const f = new FormData(e.target);
@@ -1160,7 +956,7 @@ document.getElementById("form-paiement").addEventListener("submit", async (e) =>
     e.target.reset();
     await refreshAll();
   } catch (err) {
-    toast(err.message, "error");
+    alert(err.message);
   }
 });
 
@@ -1194,11 +990,12 @@ function renderPaiements() {
 document.addEventListener("change", (e) => {
   if (e.target && e.target.id === "paiements-maison-select") renderPaiements();
   if (e.target && e.target.id === "historique-maison-select") chargerHistorique();
+  if (e.target && e.target.id === "pieces-maison-filtre") renderPieces();
 });
 
 async function telechargerQuittance(paiementId) {
   const res = await fetch(`${API}/paiements/${paiementId}/quittance`, { headers: authHeaders() });
-  if (!res.ok) { toast("Impossible de générer la quittance", "error"); return; }
+  if (!res.ok) { alert("Impossible de générer la quittance"); return; }
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -1218,7 +1015,7 @@ document.getElementById("form-ticket").addEventListener("submit", async (e) => {
     e.target.reset();
     await refreshAll();
   } catch (err) {
-    toast(err.message, "error");
+    alert(err.message);
   }
 });
 
@@ -1226,7 +1023,7 @@ function renderTickets() {
   const isGerant = ME && ME.role === "gerant";
   document.getElementById("tickets-list").innerHTML = CACHE.tickets.map(t => `
     <tr>
-      <td>${maisonAdresse(t.maison_id)}</td><td>${escapeHtml(t.description)}</td><td>${t.cout}</td><td>${badge(t.statut)}</td>
+      <td>${maisonAdresse(t.maison_id)}</td><td>${t.description}</td><td>${t.cout}</td><td>${badge(t.statut)}</td>
       <td class="actions-row">
         ${isGerant && t.statut !== "resolu" ? `<button onclick="avancerTicket(${t.id}, '${t.statut === 'ouvert' ? 'en_cours' : 'resolu'}')">${t.statut === "ouvert" ? "Prendre en charge" : "Marquer résolu"}</button>` : ""}
         ${isGerant ? `<button class="danger" onclick="deleteItem('tickets', ${t.id})">Suppr.</button>` : ""}
@@ -1241,40 +1038,59 @@ async function avancerTicket(id, nouveauStatut) {
     await apiFetch(`/tickets/${id}`, { method: "PUT", body: JSON.stringify({ ...ticket, statut: nouveauStatut }) });
     await refreshAll();
   } catch (err) {
-    toast(err.message, "error");
+    alert(err.message);
   }
 }
 
 // ---------- Utilisateurs ----------
-const userRoleSelect = document.getElementById("user-role-select");
-if (userRoleSelect) {
-  userRoleSelect.addEventListener("change", () => {
-    const estLocataire = userRoleSelect.value === "locataire";
-    document.getElementById("user-nom-field").classList.toggle("hidden", estLocataire);
-    document.getElementById("user-locataire-field").classList.toggle("hidden", !estLocataire);
-    document.querySelector('#form-user input[name="nom"]').required = !estLocataire;
-    document.getElementById("user-locataire-select").required = estLocataire;
-  });
-}
-
 const userForm = document.getElementById("form-user");
 if (userForm) {
   userForm.addEventListener("submit", async (e) => {
     e.preventDefault();
     const f = new FormData(e.target);
-    const role = f.get("role");
+    const editId = document.getElementById("user-edit-id").value;
+    const payload = { nom: f.get("nom"), email: f.get("email"), role: f.get("role") };
     try {
-      await apiFetch("/users", { method: "POST", body: JSON.stringify({
-        nom: f.get("nom") || null, email: f.get("email"), password: f.get("password"), role,
-        locataire_id: role === "locataire" ? Number(f.get("locataire_id")) : null,
-      })});
-      e.target.reset();
-      userRoleSelect.dispatchEvent(new Event("change"));
+      if (editId) {
+        const pwd = f.get("password");
+        if (pwd) payload.password = pwd;  // mot de passe changé seulement s'il est saisi
+        await apiFetch(`/users/${editId}`, { method: "PUT", body: JSON.stringify(payload) });
+      } else {
+        payload.password = f.get("password");
+        await apiFetch("/users", { method: "POST", body: JSON.stringify(payload) });
+      }
+      annulerEditionUser();
       await refreshAll();
     } catch (err) {
-      toast(err.message, "error");
+      alert(err.message);
     }
   });
+}
+
+function editUser(u) {
+  const form = document.getElementById("form-user");
+  form.nom.value = u.nom;
+  form.email.value = u.email;
+  form.role.value = u.role;
+  form.password.value = "";
+  form.password.required = false;
+  document.getElementById("user-edit-id").value = u.id;
+  document.getElementById("user-form-title").textContent = `Modifier — ${u.nom}`;
+  document.getElementById("user-password-label").textContent = "Nouveau mot de passe (laisser vide pour ne pas changer)";
+  document.getElementById("user-submit-btn").textContent = "Enregistrer les modifications";
+  document.getElementById("user-cancel-btn").classList.remove("hidden");
+  document.getElementById("view-utilisateurs").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function annulerEditionUser() {
+  const form = document.getElementById("form-user");
+  form.reset();
+  form.password.required = true;
+  document.getElementById("user-edit-id").value = "";
+  document.getElementById("user-form-title").textContent = "Créer un compte propriétaire";
+  document.getElementById("user-password-label").textContent = "Mot de passe";
+  document.getElementById("user-submit-btn").textContent = "Créer le compte";
+  document.getElementById("user-cancel-btn").classList.add("hidden");
 }
 
 function renderUsers() {
@@ -1282,64 +1098,12 @@ function renderUsers() {
   if (!tbody) return;
   tbody.innerHTML = CACHE.users.map(u => `
     <tr>
-      <td>${escapeHtml(u.nom)}</td><td>${escapeHtml(u.email)}</td><td>${badge(u.role)}</td>
-      <td class="actions-row">${u.id !== ME.id ? `<button class="danger" onclick="deleteItem('users', ${u.id})">Suppr.</button>` : ""}</td>
+      <td>${u.nom}</td><td>${u.email}</td><td>${badge(u.role)}</td>
+      <td class="actions-row">
+        <button class="secondary" onclick='editUser(${JSON.stringify(u).replace(/'/g, "&apos;")})'>Modifier</button>
+        ${u.id !== ME.id ? `<button class="danger" onclick="deleteItem('users', ${u.id})">Suppr.</button>` : ""}
+      </td>
     </tr>`).join("") || `<tr><td colspan="4" class="empty-note">Aucun utilisateur</td></tr>`;
-}
-
-// ---------- Mon profil ----------
-const monProfilForm = document.getElementById("form-mon-profil");
-if (monProfilForm) {
-  monProfilForm.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const f = new FormData(e.target);
-    const msgBox = document.getElementById("profil-msg");
-    msgBox.innerHTML = "";
-    const nom = f.get("nom").trim();
-    const email = f.get("email").trim();
-    const currentPassword = f.get("current_password");
-    const newPassword = f.get("new_password");
-    const emailChanged = email !== ME.email;
-
-    if ((newPassword || emailChanged) && !currentPassword) {
-      msgBox.innerHTML = `<div class="error">Mot de passe actuel requis pour modifier l'email ou le mot de passe.</div>`;
-      return;
-    }
-    try {
-      const payload = { nom };
-      if (emailChanged) payload.email = email;
-      if (newPassword) payload.new_password = newPassword;
-      if (currentPassword) payload.current_password = currentPassword;
-      const updated = await apiFetch("/auth/me", { method: "PUT", body: JSON.stringify(payload) });
-      document.getElementById("profil-current-password").value = "";
-      document.getElementById("profil-new-password").value = "";
-      if (emailChanged) {
-        toast("Email modifié avec succès. Merci de vous reconnecter avec votre nouvel email.", "success", 6000);
-        logout();
-        return;
-      }
-      ME = updated;
-      document.getElementById("user-nom").textContent = ME.nom;
-      msgBox.innerHTML = `<div style="background:#dcfce7; color:var(--ok, #16a34a); padding:8px 10px; border-radius:8px; font-size:13px;">✓ Profil mis à jour avec succès.</div>`;
-    } catch (err) {
-      msgBox.innerHTML = `<div class="error">${err.message}</div>`;
-    }
-  });
-}
-
-// ---------- Impression / export PDF des locataires ----------
-function imprimerLocataires() {
-  document.body.classList.add("print-locataires");
-  const cleanup = () => {
-    document.body.classList.remove("print-locataires");
-    window.removeEventListener("afterprint", cleanup);
-  };
-  window.addEventListener("afterprint", cleanup);
-  window.print();
-}
-
-function telechargerLocatairesPdf() {
-  telechargerFichier("/locataires/export/pdf", "liste_locataires.pdf");
 }
 
 // ---------- Dépenses ----------
@@ -1352,13 +1116,89 @@ if (depenseForm) {
       await apiFetch("/depenses", { method: "POST", body: JSON.stringify({
         categorie: f.get("categorie"), libelle: f.get("libelle"),
         montant: Number(f.get("montant")), date_depense: f.get("date_depense"),
+        maison_id: f.get("maison_id") ? Number(f.get("maison_id")) : null,
       })});
       e.target.reset();
       await refreshAll();
     } catch (err) {
-      toast(err.message, "error");
+      alert(err.message);
     }
   });
+}
+
+// ---------- Pièces justificatives ----------
+const pieceForm = document.getElementById("form-piece");
+if (pieceForm) {
+  pieceForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const statusEl = document.getElementById("piece-upload-status");
+    const btn = document.getElementById("piece-submit-btn");
+    const fd = new FormData(e.target);
+    const fichier = fd.get("fichier");
+    if (fichier && fichier.size > 10 * 1024 * 1024) {
+      statusEl.textContent = "❌ Fichier trop volumineux (maximum 10 Mo)";
+      return;
+    }
+    btn.disabled = true;
+    statusEl.textContent = "Téléversement en cours...";
+    try {
+      // Upload multipart : pas de Content-Type JSON, le navigateur gère le boundary
+      const res = await fetch(API + "/pieces", { method: "POST", headers: authHeaders(), body: fd });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail || `Erreur ${res.status}`);
+      }
+      statusEl.textContent = "✅ Pièce téléversée avec succès";
+      e.target.reset();
+      await refreshAll();
+      setTimeout(() => { statusEl.textContent = ""; }, 4000);
+    } catch (err) {
+      statusEl.textContent = "❌ " + err.message;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
+function formatTaille(octets) {
+  if (octets >= 1024 * 1024) return (octets / (1024 * 1024)).toFixed(1) + " Mo";
+  if (octets >= 1024) return Math.round(octets / 1024) + " Ko";
+  return octets + " o";
+}
+
+function renderPieces() {
+  const tbody = document.getElementById("pieces-list");
+  if (!tbody) return;
+  const filtre = document.getElementById("pieces-maison-filtre");
+  const maisonId = filtre && filtre.value ? Number(filtre.value) : null;
+  const isGerant = ME && ME.role === "gerant";
+  let pieces = CACHE.pieces || [];
+  if (maisonId) pieces = pieces.filter(p => p.maison_id === maisonId);
+  tbody.innerHTML = pieces.map(p => `
+    <tr>
+      <td>${new Date(p.date_upload).toLocaleDateString("fr-FR")}</td>
+      <td><strong>${p.titre}</strong>${p.description ? `<br><span style="font-size:12px;color:var(--muted)">${p.description}</span>` : ""}</td>
+      <td>${p.maison_id ? maisonAdresse(p.maison_id) : "📁 Général"}</td>
+      <td>${p.montant != null ? p.montant : "—"}</td>
+      <td>${p.type_mime === "application/pdf" ? "📄" : "🖼️"} ${p.nom_fichier} <span style="font-size:11px;color:var(--muted)">(${formatTaille(p.taille)})</span></td>
+      <td class="actions-row">
+        <button class="secondary" onclick="voirPiece(${p.id})">Voir</button>
+        ${isGerant ? `<button class="danger" onclick="deleteItem('pieces', ${p.id})">Suppr.</button>` : ""}
+      </td>
+    </tr>`).join("") || `<tr><td colspan="6" class="empty-note">Aucune pièce justificative</td></tr>`;
+}
+
+async function voirPiece(id) {
+  try {
+    const res = await fetch(`${API}/pieces/${id}/fichier`, { headers: authHeaders() });
+    if (!res.ok) throw new Error("Impossible d'ouvrir la pièce");
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    window.open(url, "_blank");
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (err) {
+    alert(err.message);
+  }
 }
 
 const CATEGORIE_LABELS = {
@@ -1371,24 +1211,10 @@ function renderDepenses() {
   if (!tbody) return;
   tbody.innerHTML = CACHE.depenses.map(d => `
     <tr>
-      <td>${d.date_depense}</td><td>${escapeHtml(CATEGORIE_LABELS[d.categorie] || d.categorie)}</td>
-      <td>${escapeHtml(d.libelle)}</td><td>${d.montant}</td>
-      <td class="actions-row no-print"><button class="danger" onclick="deleteItem('depenses', ${d.id})">Suppr.</button></td>
-    </tr>`).join("") || `<tr><td colspan="5" class="empty-note">Aucune dépense enregistrée</td></tr>`;
-}
-
-function imprimerDepenses() {
-  document.body.classList.add("print-depenses");
-  const cleanup = () => {
-    document.body.classList.remove("print-depenses");
-    window.removeEventListener("afterprint", cleanup);
-  };
-  window.addEventListener("afterprint", cleanup);
-  window.print();
-}
-
-function telechargerDepensesPdf() {
-  telechargerFichier("/depenses/export/pdf", "historique_depenses.pdf");
+      <td>${d.date_depense}</td><td>${CATEGORIE_LABELS[d.categorie] || d.categorie}</td>
+      <td>${d.libelle}</td><td>${d.maison_id ? maisonAdresse(d.maison_id) : "—"}</td><td>${d.montant}</td>
+      <td class="actions-row"><button class="danger" onclick="deleteItem('depenses', ${d.id})">Suppr.</button></td>
+    </tr>`).join("") || `<tr><td colspan="6" class="empty-note">Aucune dépense enregistrée</td></tr>`;
 }
 
 // ---------- Observations ----------
@@ -1405,7 +1231,7 @@ if (observationForm) {
       e.target.reset();
       await refreshAll();
     } catch (err) {
-      toast(err.message, "error");
+      alert(err.message);
     }
   });
 }
@@ -1435,9 +1261,9 @@ function renderObservations() {
     let html = `
       <div class="obs-item ${!o.lu ? 'unread' : ''}">
         <div class="obs-meta">${auteur} · ${maison} · ${date}${!o.lu ? " · <b style='color:var(--gold)'>non lu</b>" : ""}</div>
-        <div class="obs-message">${escapeHtml(o.message)}</div>`;
+        <div class="obs-message">${o.message}</div>`;
     if (o.reponse) {
-      html += `<div class="obs-reponse"><b>Réponse du gérant :</b> ${escapeHtml(o.reponse)}</div>`;
+      html += `<div class="obs-reponse"><b>Réponse du gérant :</b> ${o.reponse}</div>`;
     } else if (isGerant) {
       html += `
         <div class="obs-reply-form">
@@ -1458,28 +1284,28 @@ async function repondreObservation(id) {
     await apiFetch(`/observations/${id}/repondre`, { method: "PUT", body: JSON.stringify({ reponse }) });
     await refreshAll();
   } catch (err) {
-    toast(err.message, "error");
+    alert(err.message);
   }
 }
 
 // ---------- Bilan mensuel ----------
-let BILAN_MOIS_ACTUEL = null;
-
 async function genererBilan() {
   const mois = document.getElementById("bilan-mois-input").value;
   if (!mois) return;
+  const maisonSelect = document.getElementById("bilan-maison-select");
+  const maisonId = maisonSelect && maisonSelect.value ? maisonSelect.value : "";
   const loading = document.getElementById("bilan-loading");
   loading.textContent = "Génération du bilan en cours...";
   try {
-    const b = await apiFetch(`/bilan/${mois}`);
+    const b = await apiFetch(`/bilan/${mois}${maisonId ? `?maison_id=${maisonId}` : ""}`);
     loading.textContent = "";
-    BILAN_MOIS_ACTUEL = mois;
     document.getElementById("bilan-print-btn").disabled = false;
-    document.getElementById("bilan-pdf-btn").disabled = false;
-    document.getElementById("bilan-excel-btn").disabled = false;
 
-    document.getElementById("bilan-titre").textContent = `Bilan mensuel — ${b.societe}`;
-    document.getElementById("bilan-souscritre").textContent = `Période : ${b.mois} · Généré le ${new Date(b.genere_le).toLocaleString("fr-FR")}`;
+    document.getElementById("bilan-titre").textContent = b.maison_adresse
+      ? `Bilan mensuel — ${b.societe} · ${b.maison_adresse}`
+      : `Bilan mensuel — ${b.societe}`;
+    document.getElementById("bilan-souscritre").textContent =
+      `Période : ${b.mois} · Périmètre : ${b.maison_adresse || "Toutes les maisons"} · Généré le ${new Date(b.genere_le).toLocaleString("fr-FR")}`;
 
     document.getElementById("bilan-cards").innerHTML = `
       <div class="card"><div class="value">${b.total_attendu}</div><div class="label">Loyers attendus</div></div>
@@ -1490,6 +1316,7 @@ async function genererBilan() {
       <div class="card"><div class="value">${b.resultat_net}</div><div class="label">Résultat net</div></div>
       <div class="card"><div class="value">${b.taux_occupation}%</div><div class="label">Taux d'occupation actuel</div></div>
       <div class="card"><div class="value">${b.tickets_ouverts_periode}</div><div class="label">Tickets ce mois</div></div>
+      <div class="card"><div class="value">${b.nb_pieces_justificatives ?? 0}</div><div class="label">Pièces justificatives</div></div>
     `;
 
     const tagEl = document.getElementById("bilan-analyse-tag");
@@ -1502,69 +1329,12 @@ async function genererBilan() {
   }
 }
 
-async function telechargerFichier(path, filename) {
-  try {
-    const res = await fetch(API + path, { headers: authHeaders() });
-    if (!res.ok) throw new Error("Erreur lors de la génération du fichier.");
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-  } catch (err) {
-    toast(err.message, "error");
-  }
-}
-
-function telechargerBilanPdf() {
-  if (!BILAN_MOIS_ACTUEL) return;
-  telechargerFichier(`/bilan/${BILAN_MOIS_ACTUEL}/pdf`, `bilan_${BILAN_MOIS_ACTUEL}.pdf`);
-}
-
-function telechargerBilanExcel() {
-  if (!BILAN_MOIS_ACTUEL) return;
-  telechargerFichier(`/bilan/${BILAN_MOIS_ACTUEL}/excel`, `bilan_${BILAN_MOIS_ACTUEL}.xlsx`);
-}
-
-// ---------- Mon espace (locataire) ----------
-function renderMonEspace() {
-  const container = document.getElementById("mon-espace-content");
-  if (!container) return;
-  if (!CACHE.baux.length) {
-    container.innerHTML = `<div class="panel"><div class="empty-note">Aucun bail associé à votre compte pour le moment. Contactez votre gérant.</div></div>`;
-    return;
-  }
-  container.innerHTML = CACHE.baux.map(b => {
-    const paiementsBail = CACHE.paiements.filter(p => p.bail_id === b.id).sort((x, y) => y.mois_concerne.localeCompare(x.mois_concerne));
-    return `
-      <div class="panel">
-        <div class="panel-header"><strong>${maisonAdresse(b.maison_id)}</strong> ${badge(b.statut)}</div>
-        <div style="font-size:13px; color:var(--muted); margin-bottom:12px;">
-          Du ${b.date_debut} ${b.date_fin ? "au " + b.date_fin : "(en cours)"} · Loyer mensuel : ${b.loyer_mensuel} · Caution : ${b.caution}
-        </div>
-        <table><thead><tr><th>Mois</th><th>Montant</th><th>Statut</th><th>Date de paiement</th><th></th></tr></thead>
-          <tbody>
-            ${paiementsBail.map(p => `
-              <tr>
-                <td>${p.mois_concerne}</td><td>${p.montant}</td><td>${badge(p.statut)}</td><td>${p.date_paiement || "—"}</td>
-                <td class="actions-row">${p.statut === "paye" ? `<button class="secondary" onclick="telechargerQuittance(${p.id})">📄 Reçu PDF</button>` : ""}</td>
-              </tr>`).join("") || `<tr><td colspan="5" class="empty-note">Aucun paiement enregistré</td></tr>`}
-          </tbody>
-        </table>
-      </div>`;
-  }).join("");
-}
-
 // ---------- Selecteurs ----------
 function fillSelectors() {
-  const maisonOptions = CACHE.maisons.map(m => `<option value="${m.id}">${escapeHtml(m.adresse)}</option>`).join("");
-  const locataireOptions = CACHE.locataires.filter(l => !l.archive).map(l => `<option value="${l.id}">${escapeHtml(l.nom)}</option>`).join("");
+  const maisonOptions = CACHE.maisons.map(m => `<option value="${m.id}">${m.adresse}</option>`).join("");
+  const locataireOptions = CACHE.locataires.filter(l => !l.archive).map(l => `<option value="${l.id}">${l.nom}</option>`).join("");
   const bailOptions = CACHE.baux.filter(b => b.statut === "actif").map(b => `<option value="${b.id}">#${b.id} — ${maisonAdresse(b.maison_id)} / ${locataireNom(b.locataire_id)}</option>`).join("");
-  const proprietaireOptions = CACHE.users.filter(u => u.role === "proprietaire").map(u => `<option value="${u.id}">${escapeHtml(u.nom)}</option>`).join("");
+  const proprietaireOptions = CACHE.users.filter(u => u.role === "proprietaire").map(u => `<option value="${u.id}">${u.nom}</option>`).join("");
 
   const bailMaison = document.getElementById("bail-maison-select");
   const bailLocataire = document.getElementById("bail-locataire-select");
@@ -1593,13 +1363,29 @@ function fillSelectors() {
     historiqueMaisonFiltre.innerHTML = `<option value="">Toutes les maisons</option>` + maisonOptions;
     historiqueMaisonFiltre.value = val;
   }
-
-  const userLocataireSelect = document.getElementById("user-locataire-select");
-  if (userLocataireSelect) {
-    const locatairesAvecCompte = new Set(CACHE.users.filter(u => u.role === "locataire").map(u => u.locataire_id));
-    const options = CACHE.locataires.filter(l => !l.archive && !locatairesAvecCompte.has(l.id))
-      .map(l => `<option value="${l.id}">${escapeHtml(l.nom)}</option>`).join("");
-    userLocataireSelect.innerHTML = `<option value="">— Sélectionnez un locataire —</option>` + options;
+  const bilanMaison = document.getElementById("bilan-maison-select");
+  if (bilanMaison) {
+    const val = bilanMaison.value;
+    bilanMaison.innerHTML = `<option value="">Toutes les maisons</option>` + maisonOptions;
+    bilanMaison.value = val;
+  }
+  const pieceMaison = document.getElementById("piece-maison-select");
+  if (pieceMaison) {
+    const val = pieceMaison.value;
+    pieceMaison.innerHTML = `<option value="">— Document général (gérant seul) —</option>` + maisonOptions;
+    pieceMaison.value = val;
+  }
+  const piecesFiltre = document.getElementById("pieces-maison-filtre");
+  if (piecesFiltre) {
+    const val = piecesFiltre.value;
+    piecesFiltre.innerHTML = `<option value="">Toutes les maisons</option>` + maisonOptions;
+    piecesFiltre.value = val;
+  }
+  const depenseMaison = document.getElementById("depense-maison-select");
+  if (depenseMaison) {
+    const val = depenseMaison.value;
+    depenseMaison.innerHTML = `<option value="">— Générale (tout le parc) —</option>` + maisonOptions;
+    depenseMaison.value = val;
   }
 }
 
@@ -1622,55 +1408,6 @@ async function chargerHistorique() {
   }
 }
 
-// ---------- Rappels d'impayés ----------
-async function chargerRappels() {
-  const tbody = document.getElementById("rappels-list");
-  const statusBox = document.getElementById("rappels-email-status");
-  if (!tbody) return;
-  try {
-    const data = await apiFetch("/rappels/impayes");
-    statusBox.textContent = data.email_active
-      ? "Envoi automatique par email activé (SMTP configuré)."
-      : "Envoi automatique par email non configuré (variables SMTP_* absentes) — utilisez les liens WhatsApp ci-dessous pour un rappel manuel.";
-    tbody.innerHTML = data.impayes.map(r => `
-      <tr>
-        <td>${r.locataire_nom}</td><td>${r.maison_adresse}</td><td>${r.loyer_mensuel}</td>
-        <td>${r.locataire_email || "—"}</td><td>${r.locataire_telephone || "—"}</td>
-        <td class="actions-row">${r.whatsapp_url ? `<a href="${r.whatsapp_url}" target="_blank"><button type="button" class="secondary">💬 WhatsApp</button></a>` : ""}</td>
-      </tr>`).join("") || `<tr><td colspan="6" class="empty-note">Aucun impayé ce mois-ci 🎉</td></tr>`;
-  } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="6" class="empty-note">Erreur : ${err.message}</td></tr>`;
-  }
-}
-
-async function envoyerRappelsEmail() {
-  const msgBox = document.getElementById("rappels-msg");
-  msgBox.innerHTML = "";
-  try {
-    await apiFetch("/rappels/envoyer", { method: "POST" });
-    msgBox.innerHTML = `<div style="background:#dcfce7; color:#16a34a; padding:8px 10px; border-radius:8px; font-size:13px; margin-bottom:10px;">✓ Rappels envoyés par email aux locataires disposant d'une adresse email.</div>`;
-  } catch (err) {
-    msgBox.innerHTML = `<div class="error">${err.message}</div>`;
-  }
-}
-
-// ---------- Journal d'audit des connexions ----------
-async function chargerAudit() {
-  const tbody = document.getElementById("audit-list");
-  if (!tbody) return;
-  try {
-    const data = await apiFetch("/audit/logins");
-    tbody.innerHTML = data.map(l => `
-      <tr>
-        <td>${new Date(l.date_creation).toLocaleString("fr-FR")}</td><td>${l.email}</td>
-        <td>${l.succes ? '<span class="badge paye">Succès</span>' : '<span class="badge en_retard">Échec</span>'}</td>
-        <td>${l.ip || "—"}</td><td style="max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${l.user_agent || "—"}</td>
-      </tr>`).join("") || `<tr><td colspan="5" class="empty-note">Aucune connexion enregistrée</td></tr>`;
-  } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="5" class="empty-note">Erreur : ${err.message}</td></tr>`;
-  }
-}
-
 // ---------- Suppression générique ----------
 async function deleteItem(resource, id) {
   if (!confirm("Confirmer la suppression ?")) return;
@@ -1678,7 +1415,7 @@ async function deleteItem(resource, id) {
     await apiFetch(`/${resource}/${id}`, { method: "DELETE" });
     await refreshAll();
   } catch (err) {
-    toast(err.message, "error");
+    alert(err.message);
   }
 }
 
