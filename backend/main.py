@@ -305,6 +305,39 @@ def fusionner_batiments_doublons():
         db.close()
 
 
+def nettoyer_noms_logements():
+    """Pour chaque bâtiment, renomme en 'Appartement N' les logements dont le nom est vide
+    ou identique au nom/adresse du bâtiment (ex. 'MARCORY REMBLAI' répété). Préserve les
+    logements ayant déjà un vrai nom distinct (ex. 'SOUMAHORO. STA — Étage 1 porte 3')."""
+    import re as _re
+    db = SessionLocal()
+    try:
+        batiments = db.query(Batiment).all()
+        for bat in batiments:
+            cle_bat = _cle_adresse(bat.nom)
+            cle_adr = _cle_adresse(bat.adresse)
+            logements = db.query(Maison).filter(Maison.batiment_id == bat.id).order_by(Maison.id).all()
+            compteur = 0
+            a_renommer = []
+            for m in logements:
+                nom = (m.nom_logement or "").strip()
+                cle_nom = _cle_adresse(nom)
+                if not nom or cle_nom == cle_bat or cle_nom == cle_adr:
+                    a_renommer.append(m)
+                else:
+                    match = _re.match(r"appartement\s+(\d+)", nom.lower())
+                    if match:
+                        compteur = max(compteur, int(match.group(1)))
+            for m in a_renommer:
+                compteur += 1
+                m.nom_logement = f"Appartement {compteur}"
+        db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+
+
 def migrer_maisons_vers_batiments():
     """Regroupe les maisons existantes sans bâtiment sous des bâtiments créés à partir
     de leur adresse. Les maisons de même adresse (insensible casse/accents/espaces) sont
@@ -645,6 +678,7 @@ app.add_middleware(
 ensure_default_admin()
 migrer_maisons_vers_batiments()
 fusionner_batiments_doublons()
+nettoyer_noms_logements()
 
 
 @app.post("/api/auth/login", response_model=Token)
