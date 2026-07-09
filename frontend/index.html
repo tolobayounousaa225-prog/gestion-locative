@@ -201,6 +201,46 @@
   .card .value { font-size: 26px; font-weight: 800; color: var(--navy); }
   .card .label { font-size: 12px; color: var(--muted); margin-top: 4px; }
 
+  /* Cartes de statistiques colorées (dashboard) */
+  .stat-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px,1fr)); gap: 14px; margin-bottom: 22px; }
+  .stat-card {
+    background: var(--card); border-radius: 14px; padding: 18px 18px 16px; position: relative; overflow: hidden;
+    box-shadow: 0 2px 10px rgba(18,49,79,.09); border: 1px solid var(--border);
+    display: flex; flex-direction: column; gap: 3px; transition: transform .15s, box-shadow .15s;
+  }
+  .stat-card:hover { transform: translateY(-3px); box-shadow: 0 8px 22px rgba(18,49,79,.16); }
+  .stat-card .sc-ico {
+    position: absolute; right: 14px; top: 14px; font-size: 26px; opacity: .28;
+  }
+  .stat-card .sc-val { font-size: 27px; font-weight: 800; line-height: 1.1; }
+  .stat-card .sc-lbl { font-size: 12px; color: var(--muted); font-weight: 600; }
+  .stat-card .sc-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .stat-card::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; border-radius: 4px 0 0 4px; }
+  .stat-card.sc-green::before { background: #16a34a; } .stat-card.sc-green .sc-val { color: #16a34a; }
+  .stat-card.sc-blue::before  { background: #2563eb; } .stat-card.sc-blue .sc-val { color: #2563eb; }
+  .stat-card.sc-gold::before  { background: var(--gold); } .stat-card.sc-gold .sc-val { color: #b8901f; }
+  .stat-card.sc-red::before   { background: #dc2626; } .stat-card.sc-red .sc-val { color: #dc2626; }
+  .stat-card.sc-navy::before  { background: var(--navy); } .stat-card.sc-navy .sc-val { color: var(--navy); }
+  body.dark .stat-card.sc-navy .sc-val { color: #7ea2c9; }
+
+  /* Alertes intelligentes */
+  .alertes-wrap { display: flex; flex-direction: column; gap: 9px; margin-bottom: 22px; }
+  .alerte {
+    display: flex; align-items: flex-start; gap: 11px; padding: 12px 15px; border-radius: 11px;
+    font-size: 13px; border: 1px solid; animation: fadeIn .3s ease;
+  }
+  .alerte .a-ico { font-size: 17px; line-height: 1.2; }
+  .alerte .a-txt strong { display: block; margin-bottom: 1px; }
+  .alerte .a-txt span { color: var(--muted); font-size: 12.5px; }
+  .alerte.danger  { background: #fef2f2; border-color: #fecaca; }
+  .alerte.warning { background: #fffbeb; border-color: #fde68a; }
+  .alerte.info    { background: #eff6ff; border-color: #bfdbfe; }
+  body.dark .alerte.danger  { background: #2a1618; border-color: #5b2626; }
+  body.dark .alerte.warning { background: #2a2413; border-color: #5c4d1e; }
+  body.dark .alerte.info    { background: #16212e; border-color: #274056; }
+  .alerte-ok { padding: 12px 15px; border-radius: 11px; background: #f0fdf4; border: 1px solid #bbf7d0; font-size: 13px; color: #15803d; }
+  body.dark .alerte-ok { background: #14251a; border-color: #235c34; color: #6ee7a0; }
+
   .panel { background: var(--card); border-radius: 12px; padding: 20px; box-shadow: 0 1px 4px rgba(18,49,79,.08); margin-bottom: 20px; }
   .panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
   .panel-header strong { color: var(--navy); font-size: 14.5px; }
@@ -390,7 +430,8 @@
     <!-- DASHBOARD -->
     <section class="view active" id="view-dashboard">
       <div class="page-title"><div class="bar"></div><h2>Tableau de bord</h2></div>
-      <div class="cards" id="dashboard-cards"></div>
+      <div id="dashboard-alertes"></div>
+      <div class="stat-cards" id="dashboard-cards"></div>
       <div class="panel">
         <div class="panel-header"><strong>Évolution de l'encaissement (6 derniers mois)</strong></div>
         <div id="evolution-chart" class="evolution-chart"></div>
@@ -1066,19 +1107,67 @@ function proprietaireNom(id) { return CACHE.users.find(u => u.id === id)?.nom ||
 // ---------- Dashboard ----------
 async function renderDashboard() {
   const d = await apiFetch("/dashboard");
+  const encaisse = d.total_encaisse || 0;
+  const attendu = d.total_attendu || 0;
+  const resteAEncaisser = Math.max(0, attendu - encaisse);
   document.getElementById("dashboard-cards").innerHTML = `
-    <div class="card"><div class="value">${d.total_maisons}</div><div class="label">🏠 Maisons</div></div>
-    <div class="card"><div class="value">${d.taux_occupation}%</div><div class="label">Taux d'occupation</div></div>
-    <div class="card"><div class="value">${d.total_attendu}</div><div class="label">Loyers attendus (${d.mois})</div></div>
-    <div class="card"><div class="value">${d.total_encaisse}</div><div class="label">💰 Loyers encaissés</div></div>
-    <div class="card"><div class="value">${d.nombre_impayes}</div><div class="label">⚠️ Impayés</div></div>
-    <div class="card"><div class="value">${d.tickets_ouverts}</div><div class="label">🔧 Tickets ouverts</div></div>
+    <div class="stat-card sc-green">
+      <div class="sc-ico">💰</div>
+      <div class="sc-val">${fmtFCFA(encaisse)}</div>
+      <div class="sc-lbl">Encaissé ce mois</div>
+      <div class="sc-sub">sur ${fmtFCFA(attendu)} attendus</div>
+    </div>
+    <div class="stat-card sc-blue">
+      <div class="sc-ico">🏠</div>
+      <div class="sc-val">${d.taux_occupation}%</div>
+      <div class="sc-lbl">Taux d'occupation</div>
+      <div class="sc-sub">${d.maisons_occupees}/${d.total_maisons} logements occupés</div>
+    </div>
+    <div class="stat-card ${d.nombre_impayes > 0 ? "sc-red" : "sc-green"}">
+      <div class="sc-ico">${d.nombre_impayes > 0 ? "⚠️" : "✅"}</div>
+      <div class="sc-val">${d.nombre_impayes}</div>
+      <div class="sc-lbl">Impayés ce mois</div>
+      <div class="sc-sub">${resteAEncaisser > 0 ? fmtFCFA(resteAEncaisser) + " à encaisser" : "Tout est à jour"}</div>
+    </div>
+    <div class="stat-card sc-gold">
+      <div class="sc-ico">📊</div>
+      <div class="sc-val">${attendu > 0 ? Math.round(encaisse / attendu * 100) : 0}%</div>
+      <div class="sc-lbl">Taux d'encaissement</div>
+      <div class="sc-sub">${d.mois}</div>
+    </div>
+    <div class="stat-card sc-navy">
+      <div class="sc-ico">🔧</div>
+      <div class="sc-val">${d.tickets_ouverts}</div>
+      <div class="sc-lbl">Tickets ouverts</div>
+      <div class="sc-sub">maintenance en cours</div>
+    </div>
   `;
   document.getElementById("dashboard-impayes").innerHTML = d.impayes.map(i => `
-    <tr><td>#${i.bail_id}</td><td>${maisonAdresse(i.maison_id)}</td><td>${i.loyer_mensuel}</td></tr>
+    <tr><td>#${i.bail_id}</td><td>${maisonAdresse(i.maison_id)}</td><td>${fmtFCFA(i.loyer_mensuel)}</td></tr>
   `).join("") || `<tr><td colspan="3" class="empty-note">Aucun impayé 🎉</td></tr>`;
 
+  renderAlertes();
   renderEvolution();
+}
+
+async function renderAlertes() {
+  const box = document.getElementById("dashboard-alertes");
+  if (!box) return;
+  try {
+    const d = await apiFetch("/dashboard/alertes");
+    if (!d.alertes.length) {
+      box.innerHTML = `<div class="alerte-ok">✅ Tout va bien : aucun point d'attention pour le moment.</div>`;
+      return;
+    }
+    const ico = { danger: "🔴", warning: "🟠", info: "🔵" };
+    box.innerHTML = `<div class="alertes-wrap">` + d.alertes.map(a => `
+      <div class="alerte ${a.niveau}">
+        <div class="a-ico">${ico[a.niveau] || "•"}</div>
+        <div class="a-txt"><strong>${a.titre}</strong><span>${a.detail}</span></div>
+      </div>`).join("") + `</div>`;
+  } catch (err) {
+    box.innerHTML = "";
+  }
 }
 
 async function renderEvolution() {

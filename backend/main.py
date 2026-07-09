@@ -1665,6 +1665,77 @@ def dashboard(db: Session = Depends(get_db), current_user: User = Depends(get_cu
     }
 
 
+@app.get("/api/dashboard/alertes")
+def dashboard_alertes(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Alertes intelligentes : baux arrivant à échéance, logements vacants, retards répétés."""
+    is_owner = current_user.role == "proprietaire"
+    maison_ids = owned_maison_ids(db, current_user) if is_owner else None
+    aujourd_hui = date.today()
+    mois_courant = aujourd_hui.strftime("%Y-%m")
+
+    alertes = []
+
+    # 1. Baux arrivant à échéance dans les 60 jours
+    q_baux = db.query(Bail).filter(Bail.statut == "actif", Bail.date_fin.isnot(None))
+    if is_owner:
+        q_baux = q_baux.filter(Bail.maison_id.in_(maison_ids))
+    for b in q_baux.all():
+        if b.date_fin:
+            jours = (b.date_fin - aujourd_hui).days
+            if 0 <= jours <= 60:
+                maison = db.query(Maison).get(b.maison_id)
+                locataire = db.query(Locataire).get(b.locataire_id)
+                alertes.append({
+                    "type": "echeance",
+                    "niveau": "warning" if jours > 15 else "danger",
+                    "titre": "Bail bientôt à échéance",
+                    "detail": f"{libelle_logement(maison, db)} — {locataire.nom if locataire else ''} : fin dans {jours} jour(s) ({b.date_fin.strftime('%d/%m/%Y')})",
+                })
+
+    # 2. Logements vacants (statut libre)
+    q_maisons = db.query(Maison).filter(Maison.statut == "libre")
+    if is_owner:
+        q_maisons = q_maisons.filter(Maison.id.in_(maison_ids))
+    vacants = q_maisons.all()
+    if vacants:
+        noms = ", ".join(libelle_logement(m, db) for m in vacants[:5])
+        suffixe = f" et {len(vacants) - 5} autre(s)" if len(vacants) > 5 else ""
+        alertes.append({
+            "type": "vacant",
+            "niveau": "info",
+            "titre": f"{len(vacants)} logement(s) vacant(s)",
+            "detail": noms + suffixe,
+        })
+
+    # 3. Locataires en retard répété (impayés sur 2 des 3 derniers mois)
+    trois_mois = _mois_range(3)
+    q_baux_actifs = db.query(Bail).filter(Bail.statut == "actif")
+    if is_owner:
+        q_baux_actifs = q_baux_actifs.filter(Bail.maison_id.in_(maison_ids))
+    for b in q_baux_actifs.all():
+        paiements = db.query(Paiement).filter(
+            Paiement.bail_id == b.id,
+            Paiement.mois_concerne.in_(trois_mois),
+            Paiement.statut == "paye",
+        ).all()
+        mois_payes = {p.mois_concerne for p in paiements}
+        nb_impayes = len(trois_mois) - len(mois_payes)
+        if nb_impayes >= 2:
+            maison = db.query(Maison).get(b.maison_id)
+            locataire = db.query(Locataire).get(b.locataire_id)
+            alertes.append({
+                "type": "retard_repete",
+                "niveau": "danger",
+                "titre": "Retard de paiement répété",
+                "detail": f"{locataire.nom if locataire else ''} ({libelle_logement(maison, db)}) : {nb_impayes} mois impayés sur les 3 derniers",
+            })
+
+    # Tri par gravité
+    ordre = {"danger": 0, "warning": 1, "info": 2}
+    alertes.sort(key=lambda a: ordre.get(a["niveau"], 3))
+    return {"mois": mois_courant, "nombre": len(alertes), "alertes": alertes}
+
+
 # ---------- Évolution mensuelle (pour graphique dashboard) ----------
 def _mois_range(n: int) -> List[str]:
     """Retourne les n derniers mois (dont le mois courant), du plus ancien au plus récent, format AAAA-MM."""
