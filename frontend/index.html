@@ -1095,10 +1095,41 @@ function renderLocataires() {
     <tr>
       <td>${l.nom}</td><td>${l.telephone || "—"}</td><td>${l.piece_identite || "—"}</td><td>${l.contact_urgence || "—"}</td>
       <td class="actions-row gerant-only ${ME && ME.role !== 'gerant' ? 'hidden' : ''}">
+        <button class="secondary" onclick="gererLienPortail(${l.id})">${l.portail_token ? "🔗 Lien portail" : "🔗 Créer lien"}</button>
         <button class="secondary" onclick='editLocataire(${JSON.stringify(l).replace(/'/g, "&apos;")})'>Modifier</button>
         <button class="danger" onclick="deleteItem('locataires', ${l.id})">Suppr.</button>
       </td>
     </tr>`).join("") || `<tr><td colspan="5" class="empty-note">Aucun locataire</td></tr>`;
+}
+
+async function gererLienPortail(id) {
+  const loc = CACHE.locataires.find(l => l.id === id);
+  if (!loc) return;
+  try {
+    let token = loc.portail_token;
+    if (!token) {
+      const res = await apiFetch(`/locataires/${id}/portail-token`, { method: "POST" });
+      token = res.portail_token;
+      await refreshAll();
+    }
+    const lien = `${window.location.origin}/portail.html?token=${token}`;
+    const msg = `Lien du portail de ${loc.nom} :\n\n${lien}\n\nVoulez-vous copier ce lien ? (Annuler pour régénérer un nouveau lien)`;
+    if (confirm(msg)) {
+      navigator.clipboard.writeText(lien).then(
+        () => alert("Lien copié ! Vous pouvez le coller dans WhatsApp pour l'envoyer au locataire."),
+        () => prompt("Copiez ce lien manuellement :", lien)
+      );
+    } else {
+      if (confirm("Régénérer un nouveau lien ? L'ancien lien cessera de fonctionner.")) {
+        const res = await apiFetch(`/locataires/${id}/portail-token`, { method: "POST" });
+        await refreshAll();
+        const nouveauLien = `${window.location.origin}/portail.html?token=${res.portail_token}`;
+        prompt("Nouveau lien (l'ancien est désactivé) :", nouveauLien);
+      }
+    }
+  } catch (err) {
+    alert(err.message);
+  }
 }
 
 // ---------- Baux ----------

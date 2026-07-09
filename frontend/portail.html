@@ -34,6 +34,8 @@
   .badge.actif { background: #dcfce7; color: var(--ok); }
   .badge.resilie { background: #fee2e2; color: var(--danger); }
   .loading, .error-msg { text-align: center; color: var(--muted); padding: 30px 0; }
+  .dl-link { display: inline-block; padding: 4px 10px; background: var(--navy); color: #fff; border-radius: 6px; text-decoration: none; font-size: 11px; font-weight: 600; }
+  .dl-link:hover { background: var(--navy-dark); }
   .footer-note { text-align: center; font-size: 11px; color: rgba(255,255,255,.7); margin-top: 6px; }
 </style>
 </head>
@@ -53,6 +55,8 @@
   </div>
 
 <script>
+var PORTAIL_TOKEN = null;
+
 function escapeHtml(value) {
   if (value === null || value === undefined) return "";
   return String(value)
@@ -63,10 +67,12 @@ function escapeHtml(value) {
     .replace(/'/g, "&#039;");
 }
 function badge(text) { return `<span class="badge ${text}">${(text || "").replace("_", " ")}</span>`; }
+function fmt(n) { return (Math.round(n) || 0).toLocaleString("fr-FR") + " FCFA"; }
 
 async function charger() {
   const params = new URLSearchParams(window.location.search);
   const token = params.get("token");
+  PORTAIL_TOKEN = token;
   const content = document.getElementById("content");
   if (!token) {
     content.innerHTML = `<div class="error-msg">Lien invalide : aucun jeton fourni.</div>`;
@@ -79,32 +85,111 @@ async function charger() {
       return;
     }
     const data = await res.json();
-    let html = `<h1>Bonjour ${escapeHtml(data.locataire.nom)}</h1><div class="muted">Voici un récapitulatif de votre/vos bail/baux et paiements — ${escapeHtml(data.societe)}.</div>`;
-    if (!data.baux.length) {
-      html += `<div class="muted" style="margin-top:16px;">Aucun bail associé pour le moment.</div>`;
-    }
-    content.innerHTML = html;
-
-    data.baux.forEach(b => {
-      const card = document.createElement("div");
-      card.className = "card";
-      card.innerHTML = `
-        <h2>${escapeHtml(b.maison_adresse)} ${badge(b.statut)}</h2>
-        <div class="muted">Du ${b.date_debut} ${b.date_fin ? "au " + b.date_fin : "(en cours)"} · Loyer mensuel : ${b.loyer_mensuel} · Caution : ${b.caution}</div>
-        <table>
-          <thead><tr><th>Mois</th><th>Montant</th><th>Statut</th><th>Date de paiement</th></tr></thead>
-          <tbody>
-            ${b.paiements.map(p => `
-              <tr><td>${p.mois_concerne}</td><td>${p.montant}</td><td>${badge(p.statut)}</td><td>${p.date_paiement || "—"}</td></tr>
-            `).join("") || `<tr><td colspan="4" class="muted">Aucun paiement enregistré</td></tr>`}
-          </tbody>
-        </table>`;
-      document.querySelector(".wrap").insertBefore(card, document.querySelector(".footer-note"));
-    });
+    render(data);
   } catch (err) {
     content.innerHTML = `<div class="error-msg">Erreur lors du chargement. Réessayez plus tard.</div>`;
   }
 }
+
+function render(data) {
+  const content = document.getElementById("content");
+  let html = `<h1>Bonjour ${escapeHtml(data.locataire.nom)}</h1><div class="muted">Voici le récapitulatif de votre situation locative — ${escapeHtml(data.societe)}.</div>`;
+  if (!data.baux.length) {
+    html += `<div class="muted" style="margin-top:16px;">Aucun bail associé pour le moment.</div>`;
+  }
+  content.innerHTML = html;
+
+  // Nettoyer les anciennes cartes dynamiques
+  document.querySelectorAll(".dyn-card").forEach(el => el.remove());
+  const wrap = document.querySelector(".wrap");
+  const footer = document.querySelector(".footer-note");
+
+  data.baux.forEach(b => {
+    const card = document.createElement("div");
+    card.className = "card dyn-card";
+    card.innerHTML = `
+      <h2>${escapeHtml(b.maison_adresse)} ${badge(b.statut)}</h2>
+      <div class="muted">Du ${b.date_debut} ${b.date_fin ? "au " + b.date_fin : "(en cours)"} · Loyer mensuel : ${fmt(b.loyer_mensuel)} · Caution : ${fmt(b.caution)}</div>
+      <table>
+        <thead><tr><th>Mois</th><th>Montant</th><th>Statut</th><th>Date</th><th>Quittance</th></tr></thead>
+        <tbody>
+          ${b.paiements.map(p => `
+            <tr>
+              <td>${p.mois_concerne}</td>
+              <td>${fmt(p.montant)}</td>
+              <td>${badge(p.statut)}</td>
+              <td>${p.date_paiement || "—"}</td>
+              <td>${p.quittance_disponible
+                ? `<a class="dl-link" href="/api/portail/${encodeURIComponent(PORTAIL_TOKEN)}/quittance/${p.id}" target="_blank" rel="noopener">📄 PDF</a>`
+                : `<span class="muted">—</span>`}</td>
+            </tr>
+          `).join("") || `<tr><td colspan="5" class="muted">Aucun paiement enregistré</td></tr>`}
+        </tbody>
+      </table>`;
+    wrap.insertBefore(card, footer);
+  });
+
+  // Carte "Signaler un problème"
+  const signal = document.createElement("div");
+  signal.className = "card dyn-card";
+  signal.innerHTML = `
+    <h2>🔧 Signaler un problème</h2>
+    <div class="muted" style="margin-bottom:10px">Décrivez le souci rencontré dans votre logement, votre gérant en sera informé.</div>
+    <textarea id="ticket-desc" rows="3" placeholder="Ex : Fuite d'eau dans la cuisine, serrure défectueuse..." style="width:100%;padding:10px;border:1.5px solid var(--border);border-radius:9px;font-family:inherit;font-size:13px;resize:vertical"></textarea>
+    <button id="ticket-btn" onclick="envoyerSignalement()" style="margin-top:10px;padding:10px 16px;border:none;border-radius:9px;background:var(--navy);color:#fff;font-weight:600;cursor:pointer">Envoyer le signalement</button>
+    <div id="ticket-status" class="muted" style="margin-top:8px"></div>`;
+  wrap.insertBefore(signal, footer);
+
+  // Carte historique des signalements
+  if (data.tickets && data.tickets.length) {
+    const hist = document.createElement("div");
+    hist.className = "card dyn-card";
+    hist.innerHTML = `
+      <h2>📋 Mes signalements</h2>
+      <table>
+        <thead><tr><th>Date</th><th>Description</th><th>Statut</th></tr></thead>
+        <tbody>
+          ${data.tickets.map(t => `
+            <tr>
+              <td>${t.date_creation ? new Date(t.date_creation).toLocaleDateString("fr-FR") : "—"}</td>
+              <td>${escapeHtml(t.description)}</td>
+              <td>${badge(t.statut)}</td>
+            </tr>`).join("")}
+        </tbody>
+      </table>`;
+    wrap.insertBefore(hist, footer);
+  }
+}
+
+async function envoyerSignalement() {
+  const desc = document.getElementById("ticket-desc").value.trim();
+  const status = document.getElementById("ticket-status");
+  const btn = document.getElementById("ticket-btn");
+  if (!desc) {
+    status.textContent = "Veuillez décrire le problème avant d'envoyer.";
+    return;
+  }
+  btn.disabled = true;
+  status.textContent = "Envoi en cours...";
+  try {
+    const res = await fetch(`/api/portail/${encodeURIComponent(PORTAIL_TOKEN)}/ticket`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ description: desc }),
+    });
+    if (!res.ok) throw new Error("Envoi impossible");
+    status.style.color = "var(--ok)";
+    status.textContent = "✅ Votre signalement a bien été transmis à votre gérant.";
+    document.getElementById("ticket-desc").value = "";
+    setTimeout(charger, 1500);  // recharge pour afficher le nouveau ticket
+  } catch (err) {
+    status.style.color = "var(--danger)";
+    status.textContent = "❌ " + err.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 charger();
 </script>
 </body>

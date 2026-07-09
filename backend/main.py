@@ -105,6 +105,7 @@ class Locataire(Base):
     piece_identite = Column(String, nullable=True)
     contact_urgence = Column(String, nullable=True)
     archive = Column(Boolean, default=False)  # ancien locataire conservé pour l'historique par maison
+    portail_token = Column(String, nullable=True, unique=True, index=True)  # lien privé d'accès au portail
 
     baux = relationship("Bail", back_populates="locataire")
 
@@ -244,6 +245,7 @@ try:
     _add_column_if_missing("users", "reset_token", "VARCHAR")
     _add_column_if_missing("users", "reset_token_expiry", "TIMESTAMP")
     _add_column_if_missing("depenses", "maison_id", "INTEGER")
+    _add_column_if_missing("locataires", "portail_token", "VARCHAR")
 except Exception:
     pass
 
@@ -312,6 +314,7 @@ class LocataireOut(LocataireIn):
     model_config = ConfigDict(from_attributes=True)
     id: int
     archive: bool = False
+    portail_token: Optional[str] = None
 
 
 class BailIn(BaseModel):
@@ -1895,6 +1898,140 @@ def sauvegarde_base(db: Session = Depends(get_db), current: User = Depends(requi
         media_type="application/json; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{nom}"'},
     )
+
+
+# ---------- Portail locataire (accès par lien privé, sans authentification) ----------
+class TicketPortailIn(BaseModel):
+    description: str
+
+
+def _locataire_par_token(db: Session, token: str) -> Locataire:
+    if not token:
+        raise HTTPException(404, "Lien invalide")
+    loc = db.query(Locataire).filter(Locataire.portail_token == token).first()
+    if not loc:
+        raise HTTPException(404, "Lien invalide ou expiré")
+    return loc
+
+
+@app.post("/api/locataires/{locataire_id}/portail-token")
+def generer_portail_token(locataire_id: int, db: Session = Depends(get_db), current: User = Depends(require_gerant)):
+    """(Ré)génère le lien privé du portail pour un locataire."""
+    loc = db.query(Locataire).get(locataire_id)
+    if not loc:
+        raise HTTPException(404, "Locataire introuvable")
+    loc.portail_token = secrets.token_urlsafe(24)
+    db.commit()
+    db.refresh(loc)
+    journaliser(db, current, "modification", "locataire", f"Lien portail généré pour {loc.nom}")
+    return {"locataire_id": loc.id, "portail_token": loc.portail_token}
+
+
+@app.delete("/api/locataires/{locataire_id}/portail-token")
+def revoquer_portail_token(locataire_id: int, db: Session = Depends(get_db), current: User = Depends(require_gerant)):
+    """Révoque le lien privé (le rend inutilisable)."""
+    loc = db.query(Locataire).get(locataire_id)
+    if not loc:
+        raise HTTPException(404, "Locataire introuvable")
+    loc.portail_token = None
+    db.commit()
+    journaliser(db, current, "modification", "locataire", f"Lien portail révoqué pour {loc.nom}")
+    return {"ok": True}
+
+
+@app.get("/api/portail/{token}")
+def portail_data(token: str, db: Session = Depends(get_db)):
+    """Données du portail locataire (lecture seule) accessibles via le lien privé."""
+    loc = _locataire_par_token(db, token)
+    baux = db.query(Bail).filter(Bail.locataire_id == loc.id).order_by(Bail.date_debut.desc()).all()
+    baux_data = []
+    for b in baux:
+        maison = db.query(Maison).get(b.maison_id)
+        paiements = db.query(Paiement).filter(Paiement.bail_id == b.id).order_by(Paiement.mois_concerne.desc()).all()
+        baux_data.append({
+            "bail_id": b.id,
+            "maison_adresse": maison.adresse if maison else "—",
+            "statut": b.statut,
+            "date_debut": b.date_debut.isoformat() if b.date_debut else None,
+            "date_fin": b.date_fin.isoformat() if b.date_fin else None,
+            "loyer_mensuel": b.loyer_mensuel,
+            "caution": b.caution,
+            "paiements": [{
+                "id": p.id,
+                "mois_concerne": p.mois_concerne,
+                "montant": p.montant,
+                "statut": p.statut,
+                "date_paiement": p.date_paiement.isoformat() if p.date_paiement else None,
+                "quittance_disponible": p.statut == "paye",
+            } for p in paiements],
+        })
+    # Tickets déjà signalés par ce locataire
+    tickets = db.query(Ticket).filter(Ticket.locataire_id == loc.id).order_by(Ticket.date_creation.desc()).all()
+    return {
+        "societe": SOCIETE_NOM,
+        "locataire": {"nom": loc.nom, "telephone": loc.telephone},
+        "baux": baux_data,
+        "tickets": [{
+            "id": t.id,
+            "description": t.description,
+            "statut": t.statut,
+            "date_creation": t.date_creation.isoformat() if t.date_creation else None,
+        } for t in tickets],
+    }
+
+
+@app.get("/api/portail/{token}/quittance/{paiement_id}")
+def portail_quittance(token: str, paiement_id: int, request: Request, db: Session = Depends(get_db)):
+    """Téléchargement d'une quittance depuis le portail (vérifie que le paiement appartient bien au locataire)."""
+    loc = _locataire_par_token(db, token)
+    paiement = db.query(Paiement).get(paiement_id)
+    if not paiement:
+        raise HTTPException(404, "Paiement introuvable")
+    bail = db.query(Bail).get(paiement.bail_id)
+    if not bail or bail.locataire_id != loc.id:
+        raise HTTPException(403, "Accès refusé à ce document")
+    if paiement.statut != "paye":
+        raise HTTPException(400, "Quittance disponible uniquement pour un paiement soldé")
+    maison = db.query(Maison).get(bail.maison_id) if bail else None
+    locataire = loc
+    if not paiement.verification_code:
+        paiement.verification_code = generate_verification_code()
+        db.commit()
+        db.refresh(paiement)
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+    host = request.headers.get("x-forwarded-host", request.headers.get("host", request.url.netloc))
+    verify_url = f"{proto}://{host}/verifier.html?code={paiement.verification_code}"
+    buffer = generer_quittance_pdf(paiement, bail, maison, locataire, verify_url)
+    return StreamingResponse(
+        buffer,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=quittance_{paiement.id}.pdf"},
+    )
+
+
+@app.post("/api/portail/{token}/ticket")
+def portail_creer_ticket(token: str, data: TicketPortailIn, db: Session = Depends(get_db)):
+    """Le locataire signale un problème depuis son portail (crée un ticket de maintenance)."""
+    loc = _locataire_par_token(db, token)
+    if not data.description or not data.description.strip():
+        raise HTTPException(400, "La description ne peut pas être vide")
+    # Rattache le ticket au bail actif du locataire (sinon au plus récent)
+    bail = db.query(Bail).filter(Bail.locataire_id == loc.id, Bail.statut == "actif").first()
+    if not bail:
+        bail = db.query(Bail).filter(Bail.locataire_id == loc.id).order_by(Bail.date_debut.desc()).first()
+    if not bail:
+        raise HTTPException(400, "Aucun bail associé à votre compte")
+    ticket = Ticket(
+        maison_id=bail.maison_id,
+        locataire_id=loc.id,
+        description=data.description.strip(),
+        statut="ouvert",
+    )
+    db.add(ticket)
+    db.commit()
+    db.refresh(ticket)
+    journaliser(db, None, "creation", "ticket", f"Signalement portail de {loc.nom}")
+    return {"ok": True, "ticket_id": ticket.id}
 
 
 # ---------- Bilan mensuel (analyse assistée par IA) ----------
