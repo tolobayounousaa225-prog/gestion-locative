@@ -6,19 +6,15 @@ Rôles : gérant (accès complet) et propriétaire (accès en lecture à ses pro
 Paiements en espèces. Génération de quittance PDF professionnelle après chaque encaissement.
 """
 import io
-import logging
 import os
 import secrets
 import calendar
-import smtplib
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 from datetime import date, datetime, timedelta
 from typing import List, Optional
 
-from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
 from jose import JWTError, jwt
@@ -29,7 +25,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
-from sqlalchemy import Boolean, Column, Date as SADate, DateTime, Float, ForeignKey, Integer, String, create_engine, func
+from sqlalchemy import Boolean, Column, Date as SADate, DateTime, Float, ForeignKey, Integer, LargeBinary, String, create_engine
 from sqlalchemy.orm import Session, declarative_base, relationship, sessionmaker
 from sqlalchemy.exc import IntegrityError
 
@@ -42,19 +38,6 @@ try:
     import requests as http_requests
 except ImportError:
     http_requests = None
-
-try:
-    from apscheduler.schedulers.background import BackgroundScheduler
-except ImportError:
-    BackgroundScheduler = None
-
-try:
-    from openpyxl import Workbook
-    from openpyxl.styles import Font, PatternFill
-except ImportError:
-    Workbook = None
-
-logger = logging.getLogger("gestion_locative")
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -75,14 +58,6 @@ DEVISE = os.environ.get("DEVISE", "FCFA")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-3-5-haiku-20241022")
 
-SMTP_HOST = os.environ.get("SMTP_HOST", "")
-SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
-SMTP_USER = os.environ.get("SMTP_USER", "")
-SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
-SMTP_FROM = os.environ.get("SMTP_FROM", SMTP_USER)
-SMTP_USE_TLS = os.environ.get("SMTP_USE_TLS", "true").lower() != "false"
-EMAIL_ENABLED = bool(SMTP_HOST and SMTP_USER and SMTP_PASSWORD)
-
 connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
 engine = create_engine(DATABASE_URL, connect_args=connect_args)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -100,10 +75,9 @@ class User(Base):
     nom = Column(String, nullable=False)
     email = Column(String, unique=True, nullable=False, index=True)
     mot_de_passe_hash = Column(String, nullable=False)
-    role = Column(String, default="proprietaire")  # gerant / proprietaire / locataire
+    role = Column(String, default="proprietaire")  # gerant / proprietaire
     reset_token = Column(String, nullable=True)
     reset_token_expiry = Column(DateTime, nullable=True)
-    locataire_id = Column(Integer, ForeignKey("locataires.id"), nullable=True)  # compte locataire (role="locataire")
 
     maisons = relationship("Maison", back_populates="proprietaire_user")
 
@@ -128,23 +102,11 @@ class Locataire(Base):
     id = Column(Integer, primary_key=True, index=True)
     nom = Column(String, nullable=False)
     telephone = Column(String, nullable=True)
-    email = Column(String, nullable=True)
     piece_identite = Column(String, nullable=True)
     contact_urgence = Column(String, nullable=True)
     archive = Column(Boolean, default=False)  # ancien locataire conservé pour l'historique par maison
-    portail_token = Column(String, nullable=True, unique=True)  # accès au portail locataire en lecture seule
 
     baux = relationship("Bail", back_populates="locataire")
-
-
-class LoginLog(Base):
-    __tablename__ = "login_logs"
-    id = Column(Integer, primary_key=True, index=True)
-    email = Column(String, nullable=False)
-    succes = Column(Boolean, default=False)
-    ip = Column(String, nullable=True)
-    user_agent = Column(String, nullable=True)
-    date_creation = Column(DateTime, default=datetime.utcnow)
 
 
 class Bail(Base):
@@ -198,7 +160,28 @@ class Depense(Base):
     libelle = Column(String, nullable=False)
     montant = Column(Float, nullable=False)
     date_depense = Column(SADate, nullable=False)
+    maison_id = Column(Integer, ForeignKey("maisons.id"), nullable=True)  # dépense rattachée à une maison (optionnel)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class PieceJustificative(Base):
+    """Pièce justificative (facture, reçu, photo...) téléversée par le gérant.
+    Le contenu est stocké en base (bytea sur PostgreSQL) car le disque de Render
+    est éphémère : seul le stockage en base survit aux redéploiements."""
+    __tablename__ = "pieces_justificatives"
+    id = Column(Integer, primary_key=True, index=True)
+    maison_id = Column(Integer, ForeignKey("maisons.id"), nullable=True)  # null = document général (visible gérant seul)
+    titre = Column(String, nullable=False)
+    description = Column(String, nullable=True)
+    montant = Column(Float, nullable=True)  # montant de l'achat justifié (optionnel)
+    nom_fichier = Column(String, nullable=False)
+    type_mime = Column(String, nullable=False)
+    taille = Column(Integer, default=0)  # en octets
+    contenu = Column(LargeBinary, nullable=False)
+    date_upload = Column(DateTime, default=datetime.utcnow)
+    uploaded_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    maison = relationship("Maison")
 
 
 class Observation(Base):
@@ -245,11 +228,9 @@ try:
     _add_column_if_missing("maisons", "proprietaire_id", "INTEGER")
     _add_column_if_missing("paiements", "verification_code", "VARCHAR")
     _add_column_if_missing("locataires", "archive", "BOOLEAN")
-    _add_column_if_missing("locataires", "email", "VARCHAR")
-    _add_column_if_missing("locataires", "portail_token", "VARCHAR")
     _add_column_if_missing("users", "reset_token", "VARCHAR")
     _add_column_if_missing("users", "reset_token_expiry", "TIMESTAMP")
-    _add_column_if_missing("users", "locataire_id", "INTEGER")
+    _add_column_if_missing("depenses", "maison_id", "INTEGER")
 except Exception:
     pass
 
@@ -263,11 +244,10 @@ class Token(BaseModel):
 
 
 class UserIn(BaseModel):
-    nom: Optional[str] = None
+    nom: str
     email: str
     password: str
     role: str = "proprietaire"
-    locataire_id: Optional[int] = None
 
 
 class UserOut(BaseModel):
@@ -276,19 +256,13 @@ class UserOut(BaseModel):
     nom: str
     email: str
     role: str
-    locataire_id: Optional[int] = None
 
 
-class LocataireCompteIn(BaseModel):
+class UserUpdateIn(BaseModel):
+    nom: str
     email: str
-    password: str
-
-
-class UpdateMeIn(BaseModel):
-    nom: Optional[str] = None
-    email: Optional[str] = None
-    current_password: Optional[str] = None
-    new_password: Optional[str] = None
+    role: str = "proprietaire"
+    password: Optional[str] = None  # si fourni, remplace le mot de passe
 
 
 class ForgotPasswordIn(BaseModel):
@@ -317,7 +291,6 @@ class MaisonOut(MaisonIn):
 class LocataireIn(BaseModel):
     nom: str
     telephone: Optional[str] = None
-    email: Optional[str] = None
     piece_identite: Optional[str] = None
     contact_urgence: Optional[str] = None
 
@@ -326,7 +299,6 @@ class LocataireOut(LocataireIn):
     model_config = ConfigDict(from_attributes=True)
     id: int
     archive: bool = False
-    portail_token: Optional[str] = None
 
 
 class BailIn(BaseModel):
@@ -378,11 +350,26 @@ class DepenseIn(BaseModel):
     libelle: str
     montant: float
     date_depense: date
+    maison_id: Optional[int] = None
 
 
 class DepenseOut(DepenseIn):
     model_config = ConfigDict(from_attributes=True)
     id: int
+
+
+class PieceOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    maison_id: Optional[int] = None
+    titre: str
+    description: Optional[str] = None
+    montant: Optional[float] = None
+    nom_fichier: str
+    type_mime: str
+    taille: int
+    date_upload: datetime
+    uploaded_by: Optional[int] = None
 
 
 class ObservationIn(BaseModel):
@@ -406,16 +393,6 @@ class ObservationOut(BaseModel):
     date_reponse: Optional[datetime] = None
 
 
-class LoginLogOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-    id: int
-    email: str
-    succes: bool
-    ip: Optional[str] = None
-    user_agent: Optional[str] = None
-    date_creation: datetime
-
-
 # ---------------------------------------------------------------------------
 # Utilitaires auth
 # ---------------------------------------------------------------------------
@@ -429,10 +406,6 @@ def get_db():
 
 def verify_password(plain: str, hashed: str) -> bool:
     return pwd_context.verify(plain, hashed)
-
-
-def normalize_email(email: str) -> str:
-    return email.strip().lower()
 
 
 def create_access_token(data: dict) -> str:
@@ -471,18 +444,6 @@ def owned_maison_ids(db: Session, user: User) -> List[int]:
     return [m.id for m in db.query(Maison.id).filter(Maison.proprietaire_id == user.id).all()]
 
 
-def locataire_bail_ids(db: Session, user: User) -> List[int]:
-    if not user.locataire_id:
-        return []
-    return [b.id for b in db.query(Bail.id).filter(Bail.locataire_id == user.locataire_id).all()]
-
-
-def locataire_maison_ids(db: Session, user: User) -> List[int]:
-    if not user.locataire_id:
-        return []
-    return [b.maison_id for b in db.query(Bail.maison_id).filter(Bail.locataire_id == user.locataire_id).all()]
-
-
 def generate_verification_code() -> str:
     return secrets.token_hex(8)  # 16 caractères hexadécimaux
 
@@ -497,11 +458,10 @@ def mois_precedent(mois: str) -> str:
 def ensure_default_admin():
     db = SessionLocal()
     try:
-        admin_email = normalize_email(ADMIN_EMAIL)
-        if not db.query(User).filter(func.lower(User.email) == admin_email).first():
+        if not db.query(User).filter(User.email == ADMIN_EMAIL).first():
             admin = User(
                 nom=ADMIN_NOM,
-                email=admin_email,
+                email=ADMIN_EMAIL,
                 mot_de_passe_hash=pwd_context.hash(ADMIN_PASSWORD),
                 role="gerant",
             )
@@ -509,119 +469,6 @@ def ensure_default_admin():
             db.commit()
     finally:
         db.close()
-
-
-def send_email(to: str, subject: str, html_body: str) -> bool:
-    """Envoie un email via SMTP si EMAIL_ENABLED (variables SMTP_* configurées).
-    Retourne False sans lever d'exception si l'envoi échoue ou n'est pas configuré,
-    pour ne jamais bloquer le flux appelant (reset de mot de passe, rappels...)."""
-    if not EMAIL_ENABLED or not to:
-        return False
-    try:
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = subject
-        msg["From"] = SMTP_FROM
-        msg["To"] = to
-        msg.attach(MIMEText(html_body, "html"))
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as server:
-            if SMTP_USE_TLS:
-                server.starttls()
-            server.login(SMTP_USER, SMTP_PASSWORD)
-            server.sendmail(SMTP_FROM, [to], msg.as_string())
-        return True
-    except Exception:
-        logger.exception("Échec de l'envoi d'email à %s", to)
-        return False
-
-
-def whatsapp_lien(telephone: Optional[str], message: str) -> Optional[str]:
-    """Construit un lien wa.me pré-rempli pour un rappel manuel en un clic (pas d'API tierce requise)."""
-    if not telephone:
-        return None
-    numero = "".join(ch for ch in telephone if ch.isdigit())
-    if not numero:
-        return None
-    from urllib.parse import quote
-    return f"https://wa.me/{numero}?text={quote(message)}"
-
-
-def generer_echeancier_mois(db: Session, mois: str) -> int:
-    """Crée un paiement 'en_attente' pour chaque bail actif qui n'a pas encore de paiement pour ce mois.
-    Idempotent : peut être appelé plusieurs fois sans dupliquer les paiements existants."""
-    baux_actifs = db.query(Bail).filter(Bail.statut == "actif").all()
-    bail_ids_avec_paiement = {
-        p.bail_id for p in db.query(Paiement).filter(Paiement.mois_concerne == mois).all()
-    }
-    cree = 0
-    for bail in baux_actifs:
-        if bail.id in bail_ids_avec_paiement:
-            continue
-        db.add(Paiement(
-            bail_id=bail.id,
-            mois_concerne=mois,
-            montant=bail.loyer_mensuel,
-            statut="en_attente",
-        ))
-        cree += 1
-    if cree:
-        db.commit()
-    return cree
-
-
-def verifier_et_envoyer_rappels_impayes() -> None:
-    """Job planifié : pour chaque bail actif impayé du mois courant, envoie un email de rappel
-    au locataire si son email est renseigné et que SMTP est configuré."""
-    if not EMAIL_ENABLED:
-        return
-    db = SessionLocal()
-    try:
-        mois_courant = date.today().strftime("%Y-%m")
-        baux_actifs = db.query(Bail).filter(Bail.statut == "actif").all()
-        paiements_mois = db.query(Paiement).filter(Paiement.mois_concerne == mois_courant).all()
-        bail_ids_payes = {p.bail_id for p in paiements_mois if p.statut == "paye"}
-        for bail in baux_actifs:
-            if bail.id in bail_ids_payes:
-                continue
-            locataire = db.query(Locataire).get(bail.locataire_id)
-            maison = db.query(Maison).get(bail.maison_id)
-            if not locataire or not locataire.email:
-                continue
-            sujet = f"Rappel — loyer de {mois_courant} en attente ({SOCIETE_NOM})"
-            montant_fmt = f"{bail.loyer_mensuel:,.0f}".replace(",", " ")
-            corps = (
-                f"<p>Bonjour {locataire.nom},</p>"
-                f"<p>Nous vous rappelons que le loyer du mois de <b>{mois_courant}</b> "
-                f"pour le logement situé à <b>{maison.adresse if maison else ''}</b> "
-                f"(montant : {montant_fmt} {DEVISE}) reste en attente de règlement.</p>"
-                f"<p>Merci de bien vouloir régulariser votre situation dans les meilleurs délais.</p>"
-                f"<p>Cordialement,<br>{SOCIETE_GERANT}<br>{SOCIETE_NOM}</p>"
-            )
-            send_email(locataire.email, sujet, corps)
-    finally:
-        db.close()
-
-
-def job_generation_echeancier_mensuel() -> None:
-    db = SessionLocal()
-    try:
-        mois_courant = date.today().strftime("%Y-%m")
-        generer_echeancier_mois(db, mois_courant)
-    finally:
-        db.close()
-
-
-scheduler = None
-if BackgroundScheduler is not None:
-    try:
-        scheduler = BackgroundScheduler(timezone="UTC")
-        scheduler.add_job(verifier_et_envoyer_rappels_impayes, "cron", hour=8, id="rappels_impayes", replace_existing=True)
-        scheduler.add_job(job_generation_echeancier_mensuel, "cron", day=1, hour=1, id="echeancier_mensuel", replace_existing=True)
-        scheduler.start()
-    except Exception:
-        # Les rappels automatiques et la génération d'échéancier planifiée sont des fonctionnalités
-        # secondaires : un échec de démarrage du planificateur ne doit jamais empêcher l'API de démarrer.
-        logger.exception("Échec du démarrage du planificateur de tâches (rappels/échéancier automatiques désactivés).")
-        scheduler = None
 
 
 # ---------------------------------------------------------------------------
@@ -632,10 +479,7 @@ app = FastAPI(title="Gestion Locative — TOURÉ IMMOBILIER")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    # allow_credentials=False : l'authentification se fait par jeton Bearer (pas de cookies),
-    # donc les credentials cross-origin ne sont pas nécessaires. Combiner allow_origins="*"
-    # avec allow_credentials=True est une configuration invalide/dangereuse à éviter.
-    allow_credentials=False,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -644,27 +488,9 @@ ensure_default_admin()
 
 
 @app.post("/api/auth/login", response_model=Token)
-def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    email_normalise = normalize_email(form_data.username)
-    depuis = datetime.utcnow() - timedelta(minutes=15)
-    echecs_recents = db.query(LoginLog).filter(
-        func.lower(LoginLog.email) == email_normalise,
-        LoginLog.succes == False,
-        LoginLog.date_creation >= depuis,
-    ).count()
-    if echecs_recents >= 5:
-        raise HTTPException(status_code=429, detail="Trop de tentatives échouées. Réessayez dans quelques minutes.")
-
-    user = db.query(User).filter(func.lower(User.email) == email_normalise).first()
-    succes = bool(user and verify_password(form_data.password, user.mot_de_passe_hash))
-    db.add(LoginLog(
-        email=form_data.username,
-        succes=succes,
-        ip=request.client.host if request.client else None,
-        user_agent=request.headers.get("user-agent"),
-    ))
-    db.commit()
-    if not succes:
+def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == form_data.username).first()
+    if not user or not verify_password(form_data.password, user.mot_de_passe_hash):
         raise HTTPException(status_code=401, detail="Email ou mot de passe incorrect")
     token = create_access_token({"sub": user.email})
     return Token(access_token=token)
@@ -675,39 +501,10 @@ def me(current_user: User = Depends(get_current_user)):
     return {"id": current_user.id, "nom": current_user.nom, "email": current_user.email, "role": current_user.role}
 
 
-@app.put("/api/auth/me")
-def update_me(data: UpdateMeIn, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    new_email = normalize_email(data.email) if data.email else None
-    wants_password_change = bool(data.new_password)
-    wants_email_change = bool(new_email) and new_email != current_user.email.lower()
-
-    if (wants_password_change or wants_email_change) and not data.current_password:
-        raise HTTPException(400, "Mot de passe actuel requis pour modifier l'email ou le mot de passe.")
-    if (wants_password_change or wants_email_change) and not verify_password(data.current_password, current_user.mot_de_passe_hash):
-        raise HTTPException(400, "Mot de passe actuel incorrect.")
-
-    if wants_email_change:
-        if db.query(User).filter(func.lower(User.email) == new_email, User.id != current_user.id).first():
-            raise HTTPException(400, "Cet email est déjà utilisé.")
-        current_user.email = new_email
-
-    if data.nom:
-        current_user.nom = data.nom
-
-    if wants_password_change:
-        if len(data.new_password) < 4:
-            raise HTTPException(400, "Le mot de passe doit contenir au moins 4 caractères.")
-        current_user.mot_de_passe_hash = pwd_context.hash(data.new_password)
-
-    db.commit()
-    db.refresh(current_user)
-    return {"id": current_user.id, "nom": current_user.nom, "email": current_user.email, "role": current_user.role}
-
-
 # ---------- Mot de passe oublié (auto-service) ----------
 @app.post("/api/auth/forgot-password")
 def forgot_password(data: ForgotPasswordIn, request: Request, db: Session = Depends(get_db)):
-    user = db.query(User).filter(func.lower(User.email) == normalize_email(data.email)).first()
+    user = db.query(User).filter(User.email == data.email).first()
     if not user:
         raise HTTPException(404, "Aucun compte trouvé avec cet email.")
     token = secrets.token_urlsafe(32)
@@ -719,17 +516,6 @@ def forgot_password(data: ForgotPasswordIn, request: Request, db: Session = Depe
     host = request.headers.get("x-forwarded-host", request.headers.get("host", request.url.netloc))
     base_url = f"{proto}://{host}"
     reset_url = f"{base_url}/reset-password.html?token={token}"
-
-    if EMAIL_ENABLED:
-        corps = (
-            f"<p>Bonjour {user.nom},</p>"
-            f"<p>Une demande de réinitialisation de mot de passe a été effectuée pour votre compte {SOCIETE_NOM}.</p>"
-            f"<p><a href=\"{reset_url}\">Cliquez ici pour choisir un nouveau mot de passe</a> (lien valable 1 heure).</p>"
-            f"<p>Si vous n'êtes pas à l'origine de cette demande, ignorez cet email.</p>"
-        )
-        if send_email(user.email, f"Réinitialisation du mot de passe — {SOCIETE_NOM}", corps):
-            return {"envoye": True, "message": "Un email de réinitialisation a été envoyé.", "expire_dans_minutes": 60}
-
     return {"reset_url": reset_url, "expire_dans_minutes": 60}
 
 
@@ -755,36 +541,43 @@ def list_users(db: Session = Depends(get_db), _: User = Depends(require_gerant))
 
 @app.post("/api/users", response_model=UserOut)
 def create_user(data: UserIn, db: Session = Depends(get_db), _: User = Depends(require_gerant)):
-    email = normalize_email(data.email)
-    if db.query(User).filter(func.lower(User.email) == email).first():
+    if db.query(User).filter(User.email == data.email).first():
         raise HTTPException(400, "Cet email est déjà utilisé")
-    if data.role not in ("gerant", "proprietaire", "locataire"):
+    if data.role not in ("gerant", "proprietaire"):
         raise HTTPException(400, "Rôle invalide")
-    if len(data.password) < 4:
-        raise HTTPException(400, "Le mot de passe doit contenir au moins 4 caractères.")
-
-    if data.role == "locataire":
-        if not data.locataire_id:
-            raise HTTPException(400, "Veuillez sélectionner le locataire associé à ce compte.")
-        locataire = db.query(Locataire).get(data.locataire_id)
-        if not locataire:
-            raise HTTPException(404, "Locataire introuvable")
-        if db.query(User).filter(User.locataire_id == data.locataire_id).first():
-            raise HTTPException(400, "Ce locataire a déjà un compte de connexion. Utilisez le bouton « Créer un accès » sur sa fiche pour réinitialiser son mot de passe.")
-        nom = locataire.nom
-    else:
-        if not data.nom:
-            raise HTTPException(400, "Le nom est requis.")
-        nom = data.nom
-
     user = User(
-        nom=nom,
-        email=email,
+        nom=data.nom,
+        email=data.email,
         mot_de_passe_hash=pwd_context.hash(data.password),
         role=data.role,
-        locataire_id=data.locataire_id if data.role == "locataire" else None,
     )
     db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+@app.put("/api/users/{user_id}", response_model=UserOut)
+def update_user(user_id: int, data: UserUpdateIn, db: Session = Depends(get_db), current: User = Depends(require_gerant)):
+    user = db.query(User).get(user_id)
+    if not user:
+        raise HTTPException(404, "Utilisateur introuvable")
+    if data.role not in ("gerant", "proprietaire"):
+        raise HTTPException(400, "Rôle invalide")
+    if user_id == current.id and data.role != "gerant":
+        raise HTTPException(400, "Impossible de retirer votre propre rôle de gérant")
+    existant = db.query(User).filter(User.email == data.email, User.id != user_id).first()
+    if existant:
+        raise HTTPException(400, "Cet email est déjà utilisé par un autre compte")
+    user.nom = data.nom
+    user.email = data.email
+    user.role = data.role
+    if data.password:
+        if len(data.password) < 6:
+            raise HTTPException(400, "Le mot de passe doit contenir au moins 6 caractères")
+        user.mot_de_passe_hash = pwd_context.hash(data.password)
+    # Garde le nom d'affichage du propriétaire synchronisé sur ses maisons
+    db.query(Maison).filter(Maison.proprietaire_id == user_id).update({"proprietaire": data.nom})
     db.commit()
     db.refresh(user)
     return user
@@ -803,20 +596,12 @@ def delete_user(user_id: int, db: Session = Depends(get_db), current: User = Dep
     return {"ok": True}
 
 
-# ---------- Journal d'audit des connexions (gérant uniquement) ----------
-@app.get("/api/audit/logins", response_model=List[LoginLogOut])
-def list_login_logs(limit: int = 200, db: Session = Depends(get_db), _: User = Depends(require_gerant)):
-    return db.query(LoginLog).order_by(LoginLog.id.desc()).limit(min(limit, 500)).all()
-
-
 # ---------- Maisons ----------
 @app.get("/api/maisons", response_model=List[MaisonOut])
 def list_maisons(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     q = db.query(Maison)
     if current_user.role == "proprietaire":
         q = q.filter(Maison.proprietaire_id == current_user.id)
-    elif current_user.role == "locataire":
-        q = q.filter(Maison.id.in_(locataire_maison_ids(db, current_user)))
     return q.all()
 
 
@@ -872,35 +657,7 @@ def list_locataires(db: Session = Depends(get_db), current_user: User = Depends(
         maison_ids = owned_maison_ids(db, current_user)
         locataire_ids = {b.locataire_id for b in db.query(Bail).filter(Bail.maison_id.in_(maison_ids)).all()}
         return db.query(Locataire).filter(Locataire.id.in_(locataire_ids)).all()
-    if current_user.role == "locataire":
-        return db.query(Locataire).filter(Locataire.id == current_user.locataire_id).all()
     return db.query(Locataire).all()
-
-
-@app.get("/api/locataires/export/pdf")
-def export_locataires_pdf(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    if current_user.role == "proprietaire":
-        maison_ids = owned_maison_ids(db, current_user)
-        locataire_ids = {b.locataire_id for b in db.query(Bail).filter(Bail.maison_id.in_(maison_ids)).all()}
-        locataires = db.query(Locataire).filter(Locataire.id.in_(locataire_ids)).order_by(Locataire.nom).all()
-    elif current_user.role == "locataire":
-        locataires = db.query(Locataire).filter(Locataire.id == current_user.locataire_id).all()
-    else:
-        locataires = db.query(Locataire).filter(Locataire.archive == False).order_by(Locataire.nom).all()
-
-    rows = []
-    for loc in locataires:
-        bail_actif = next((b for b in loc.baux if b.statut == "actif"), None)
-        maison_adresse = bail_actif.maison.adresse if bail_actif else None
-        loyer = bail_actif.loyer_mensuel if bail_actif else None
-        rows.append((loc, maison_adresse, loyer))
-
-    buffer = generer_liste_locataires_pdf(rows)
-    return StreamingResponse(
-        buffer,
-        media_type="application/pdf",
-        headers={"Content-Disposition": "attachment; filename=liste_locataires.pdf"},
-    )
 
 
 @app.post("/api/locataires", response_model=LocataireOut)
@@ -919,9 +676,6 @@ def update_locataire(locataire_id: int, data: LocataireIn, db: Session = Depends
         raise HTTPException(404, "Locataire introuvable")
     for k, v in data.model_dump().items():
         setattr(locataire, k, v)
-    compte = db.query(User).filter(User.locataire_id == locataire_id).first()
-    if compte:
-        compte.nom = data.nom
     db.commit()
     db.refresh(locataire)
     return locataire
@@ -939,9 +693,6 @@ def delete_locataire(locataire_id: int, db: Session = Depends(get_db), _: User =
         locataire.archive = True
         db.commit()
         return {"ok": True, "archive": True}
-    compte = db.query(User).filter(User.locataire_id == locataire_id).first()
-    if compte:
-        db.delete(compte)
     try:
         db.delete(locataire)
         db.commit()
@@ -951,83 +702,6 @@ def delete_locataire(locataire_id: int, db: Session = Depends(get_db), _: User =
     return {"ok": True, "archive": False}
 
 
-# ---------- Portail locataire (lecture seule, accès public par jeton) ----------
-@app.post("/api/locataires/{locataire_id}/portail-token")
-def generer_portail_token(locataire_id: int, request: Request, db: Session = Depends(get_db), _: User = Depends(require_gerant)):
-    locataire = db.query(Locataire).get(locataire_id)
-    if not locataire:
-        raise HTTPException(404, "Locataire introuvable")
-    locataire.portail_token = secrets.token_urlsafe(24)
-    db.commit()
-    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
-    host = request.headers.get("x-forwarded-host", request.headers.get("host", request.url.netloc))
-    base_url = f"{proto}://{host}"
-    return {"portail_url": f"{base_url}/portail.html?token={locataire.portail_token}"}
-
-
-# ---------- Accès locataire (compte de connexion créé par le gérant) ----------
-@app.post("/api/locataires/{locataire_id}/compte", response_model=UserOut)
-def creer_acces_locataire(locataire_id: int, data: LocataireCompteIn, db: Session = Depends(get_db), _: User = Depends(require_gerant)):
-    locataire = db.query(Locataire).get(locataire_id)
-    if not locataire:
-        raise HTTPException(404, "Locataire introuvable")
-    if len(data.password) < 4:
-        raise HTTPException(400, "Le mot de passe doit contenir au moins 4 caractères.")
-
-    email = normalize_email(data.email)
-    compte = db.query(User).filter(User.locataire_id == locataire_id).first()
-    email_deja_pris = db.query(User).filter(func.lower(User.email) == email, User.id != (compte.id if compte else -1)).first()
-    if email_deja_pris:
-        raise HTTPException(400, "Cet email est déjà utilisé par un autre compte.")
-
-    if compte:
-        compte.email = email
-        compte.mot_de_passe_hash = pwd_context.hash(data.password)
-        compte.nom = locataire.nom
-    else:
-        compte = User(
-            nom=locataire.nom,
-            email=email,
-            mot_de_passe_hash=pwd_context.hash(data.password),
-            role="locataire",
-            locataire_id=locataire_id,
-        )
-        db.add(compte)
-    db.commit()
-    db.refresh(compte)
-    return compte
-
-
-@app.get("/api/portail/{token}")
-def portail_locataire(token: str, db: Session = Depends(get_db)):
-    locataire = db.query(Locataire).filter(Locataire.portail_token == token).first()
-    if not locataire:
-        raise HTTPException(404, "Lien de portail invalide.")
-    baux = db.query(Bail).filter(Bail.locataire_id == locataire.id).order_by(Bail.date_debut.desc()).all()
-    baux_out = []
-    for b in baux:
-        maison = db.query(Maison).get(b.maison_id)
-        paiements = db.query(Paiement).filter(Paiement.bail_id == b.id).order_by(Paiement.mois_concerne.desc()).all()
-        baux_out.append({
-            "id": b.id,
-            "maison_adresse": maison.adresse if maison else "—",
-            "date_debut": str(b.date_debut),
-            "date_fin": str(b.date_fin) if b.date_fin else None,
-            "loyer_mensuel": b.loyer_mensuel,
-            "caution": b.caution,
-            "statut": b.statut,
-            "paiements": [
-                {"mois_concerne": p.mois_concerne, "montant": p.montant, "statut": p.statut, "date_paiement": str(p.date_paiement) if p.date_paiement else None}
-                for p in paiements
-            ],
-        })
-    return {
-        "societe": SOCIETE_NOM,
-        "locataire": {"nom": locataire.nom, "telephone": locataire.telephone, "email": locataire.email},
-        "baux": baux_out,
-    }
-
-
 # ---------- Historique des locataires (anciens occupants) ----------
 @app.get("/api/historique-locataires")
 def historique_locataires(maison_id: Optional[int] = None, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -1035,8 +709,6 @@ def historique_locataires(maison_id: Optional[int] = None, db: Session = Depends
     if current_user.role == "proprietaire":
         maison_ids = owned_maison_ids(db, current_user)
         q = q.filter(Bail.maison_id.in_(maison_ids))
-    elif current_user.role == "locataire":
-        q = q.filter(Bail.maison_id.in_(locataire_maison_ids(db, current_user)))
     if maison_id:
         q = q.filter(Bail.maison_id == maison_id)
     resultats = []
@@ -1064,8 +736,6 @@ def list_baux(db: Session = Depends(get_db), current_user: User = Depends(get_cu
     if current_user.role == "proprietaire":
         maison_ids = owned_maison_ids(db, current_user)
         q = q.filter(Bail.maison_id.in_(maison_ids))
-    elif current_user.role == "locataire":
-        q = q.filter(Bail.locataire_id == current_user.locataire_id)
     return q.all()
 
 
@@ -1123,8 +793,6 @@ def list_paiements(db: Session = Depends(get_db), current_user: User = Depends(g
         maison_ids = owned_maison_ids(db, current_user)
         bail_ids = [b.id for b in db.query(Bail.id).filter(Bail.maison_id.in_(maison_ids)).all()]
         q = q.join(Bail).filter(Paiement.bail_id.in_(bail_ids))
-    elif current_user.role == "locataire":
-        q = q.filter(Paiement.bail_id.in_(locataire_bail_ids(db, current_user)))
     return q.all()
 
 
@@ -1136,57 +804,6 @@ def create_paiement(data: PaiementIn, db: Session = Depends(get_db), _: User = D
     db.commit()
     db.refresh(paiement)
     return paiement
-
-
-# ---------- Échéancier mensuel (génération automatique) ----------
-@app.post("/api/paiements/generer-echeancier")
-def generer_echeancier(mois: Optional[str] = None, db: Session = Depends(get_db), _: User = Depends(require_gerant)):
-    mois_cible = mois or date.today().strftime("%Y-%m")
-    nb_crees = generer_echeancier_mois(db, mois_cible)
-    return {"mois": mois_cible, "paiements_crees": nb_crees}
-
-
-# ---------- Rappels d'impayés (email + lien WhatsApp pré-rempli) ----------
-@app.get("/api/rappels/impayes")
-def liste_rappels_impayes(db: Session = Depends(get_db), _: User = Depends(require_gerant)):
-    mois_courant = date.today().strftime("%Y-%m")
-    baux_actifs = db.query(Bail).filter(Bail.statut == "actif").all()
-    paiements_mois = db.query(Paiement).filter(Paiement.mois_concerne == mois_courant).all()
-    bail_ids_payes = {p.bail_id for p in paiements_mois if p.statut == "paye"}
-
-    resultats = []
-    for bail in baux_actifs:
-        if bail.id in bail_ids_payes:
-            continue
-        locataire = db.query(Locataire).get(bail.locataire_id)
-        maison = db.query(Maison).get(bail.maison_id)
-        if not locataire:
-            continue
-        montant_fmt = f"{bail.loyer_mensuel:,.0f}".replace(",", " ")
-        message = (
-            f"Bonjour {locataire.nom}, nous vous rappelons que le loyer de {mois_courant} "
-            f"({montant_fmt} {DEVISE}) pour {maison.adresse if maison else 'votre logement'} "
-            f"reste en attente de règlement. Merci de régulariser dans les meilleurs délais. — {SOCIETE_NOM}"
-        )
-        resultats.append({
-            "bail_id": bail.id,
-            "locataire_nom": locataire.nom,
-            "locataire_telephone": locataire.telephone,
-            "locataire_email": locataire.email,
-            "maison_adresse": maison.adresse if maison else "—",
-            "loyer_mensuel": bail.loyer_mensuel,
-            "whatsapp_url": whatsapp_lien(locataire.telephone, message),
-            "email_disponible": bool(locataire.email),
-        })
-    return {"mois": mois_courant, "email_active": EMAIL_ENABLED, "impayes": resultats}
-
-
-@app.post("/api/rappels/envoyer")
-def envoyer_rappels_impayes(_: User = Depends(require_gerant)):
-    if not EMAIL_ENABLED:
-        raise HTTPException(400, "Aucun serveur SMTP configuré (variables SMTP_HOST / SMTP_USER / SMTP_PASSWORD).")
-    verifier_et_envoyer_rappels_impayes()
-    return {"ok": True}
 
 
 # ---------- Génération PDF — quittance professionnelle ----------
@@ -1419,155 +1036,6 @@ def generer_quittance_pdf(paiement, bail, maison, locataire, verify_url: str = "
     return buffer
 
 
-def generer_liste_locataires_pdf(rows) -> io.BytesIO:
-    """rows : liste de tuples (locataire, maison_adresse, loyer_mensuel_ou_None)."""
-    buffer = io.BytesIO()
-    c = canvas.Canvas(buffer, pagesize=A4)
-    width, height = A4
-    margin = 15 * mm
-    col_x = [margin, margin + 55 * mm, margin + 90 * mm, margin + 125 * mm, width - margin]
-    row_h = 8 * mm
-    header_h = 26 * mm
-
-    def draw_header(page_titre_suffixe=""):
-        c.setStrokeColor(BORDER)
-        c.setLineWidth(1)
-        c.rect(margin - 6, margin - 6, width - 2 * (margin - 6), height - 2 * (margin - 6))
-        c.setFillColor(NAVY)
-        c.rect(0, height - header_h, width, header_h, stroke=0, fill=1)
-        c.setFillColor(GOLD)
-        c.rect(0, height - header_h - 2, width, 2, stroke=0, fill=1)
-        c.setFillColor(colors.white)
-        c.setFont("Helvetica-Bold", 18)
-        c.drawString(margin, height - 13 * mm, SOCIETE_NOM)
-        c.setFillColor(GOLD)
-        c.setFont("Helvetica-Oblique", 9)
-        c.drawString(margin, height - 19 * mm, SOCIETE_TAGLINE)
-        c.setFillColor(colors.white)
-        c.setFont("Helvetica-Bold", 13)
-        c.drawRightString(width - margin, height - 13 * mm, "LISTE DES LOCATAIRES")
-        c.setFont("Helvetica", 8.5)
-        c.drawRightString(width - margin, height - 19 * mm, f"Généré le {date.today().strftime('%d/%m/%Y')}{page_titre_suffixe}")
-
-        y = height - header_h - 8 * mm
-        c.setFillColor(NAVY)
-        c.rect(margin, y - row_h, width - 2 * margin, row_h, stroke=0, fill=1)
-        c.setFillColor(colors.white)
-        c.setFont("Helvetica-Bold", 9)
-        c.drawString(col_x[0] + 5, y - row_h + 6, "Nom")
-        c.drawString(col_x[1] + 5, y - row_h + 6, "Téléphone")
-        c.drawString(col_x[2] + 5, y - row_h + 6, "Maison actuelle")
-        c.drawString(col_x[3] + 5, y - row_h + 6, f"Loyer ({DEVISE})")
-        return y - row_h
-
-    y = draw_header()
-    c.setFont("Helvetica", 8.5)
-    for idx, (loc, maison_adresse, loyer) in enumerate(rows):
-        if y - row_h < margin + 10 * mm:
-            c.showPage()
-            y = draw_header()
-            c.setFont("Helvetica", 8.5)
-        bg = LIGHT if idx % 2 == 0 else colors.white
-        c.setFillColor(bg)
-        c.setStrokeColor(BORDER)
-        c.rect(margin, y - row_h, width - 2 * margin, row_h, stroke=1, fill=1)
-        c.setFillColor(TEXT_DARK)
-        c.drawString(col_x[0] + 5, y - row_h + 6, (loc.nom or "-")[:32])
-        c.drawString(col_x[1] + 5, y - row_h + 6, loc.telephone or "-")
-        c.drawString(col_x[2] + 5, y - row_h + 6, (maison_adresse or "-")[:24])
-        c.drawRightString(col_x[4] - 5, y - row_h + 6, f"{loyer:,.0f}".replace(",", " ") if loyer else "-")
-        y -= row_h
-
-    c.setFillColor(MUTED)
-    c.setFont("Helvetica", 7.5)
-    c.drawString(margin, margin - 2, f"{len(rows)} locataire(s) — {SOCIETE_NOM}")
-
-    c.showPage()
-    c.save()
-    buffer.seek(0)
-    return buffer
-
-
-def generer_depenses_pdf(depenses) -> io.BytesIO:
-    buffer = io.BytesIO()
-    c = canvas.Canvas(buffer, pagesize=A4)
-    width, height = A4
-    margin = 15 * mm
-    col_x = [margin, margin + 30 * mm, margin + 85 * mm, width - margin]
-    row_h = 8 * mm
-    header_h = 26 * mm
-    total = sum(d.montant for d in depenses)
-
-    def draw_header():
-        c.setStrokeColor(BORDER)
-        c.setLineWidth(1)
-        c.rect(margin - 6, margin - 6, width - 2 * (margin - 6), height - 2 * (margin - 6))
-        c.setFillColor(NAVY)
-        c.rect(0, height - header_h, width, header_h, stroke=0, fill=1)
-        c.setFillColor(GOLD)
-        c.rect(0, height - header_h - 2, width, 2, stroke=0, fill=1)
-        c.setFillColor(colors.white)
-        c.setFont("Helvetica-Bold", 18)
-        c.drawString(margin, height - 13 * mm, SOCIETE_NOM)
-        c.setFillColor(GOLD)
-        c.setFont("Helvetica-Oblique", 9)
-        c.drawString(margin, height - 19 * mm, SOCIETE_TAGLINE)
-        c.setFillColor(colors.white)
-        c.setFont("Helvetica-Bold", 13)
-        c.drawRightString(width - margin, height - 13 * mm, "HISTORIQUE DES DÉPENSES")
-        c.setFont("Helvetica", 8.5)
-        c.drawRightString(width - margin, height - 19 * mm, f"Généré le {date.today().strftime('%d/%m/%Y')}")
-
-        y = height - header_h - 8 * mm
-        c.setFillColor(NAVY)
-        c.rect(margin, y - row_h, width - 2 * margin, row_h, stroke=0, fill=1)
-        c.setFillColor(colors.white)
-        c.setFont("Helvetica-Bold", 9)
-        c.drawString(col_x[0] + 5, y - row_h + 6, "Date")
-        c.drawString(col_x[1] + 5, y - row_h + 6, "Catégorie")
-        c.drawString(col_x[2] + 5, y - row_h + 6, "Libellé")
-        c.drawRightString(col_x[3] - 5, y - row_h + 6, f"Montant ({DEVISE})")
-        return y - row_h
-
-    y = draw_header()
-    c.setFont("Helvetica", 8.5)
-    for idx, d in enumerate(depenses):
-        if y - row_h < margin + 14 * mm:
-            c.showPage()
-            y = draw_header()
-            c.setFont("Helvetica", 8.5)
-        bg = LIGHT if idx % 2 == 0 else colors.white
-        c.setFillColor(bg)
-        c.setStrokeColor(BORDER)
-        c.rect(margin, y - row_h, width - 2 * margin, row_h, stroke=1, fill=1)
-        c.setFillColor(TEXT_DARK)
-        c.drawString(col_x[0] + 5, y - row_h + 6, str(d.date_depense))
-        c.drawString(col_x[1] + 5, y - row_h + 6, CATEGORIE_LABELS.get(d.categorie, d.categorie))
-        c.drawString(col_x[2] + 5, y - row_h + 6, (d.libelle or "-")[:38])
-        c.drawRightString(col_x[3] - 5, y - row_h + 6, f"{d.montant:,.0f}".replace(",", " "))
-        y -= row_h
-
-    if y - row_h < margin + 14 * mm:
-        c.showPage()
-        y = draw_header()
-
-    c.setFillColor(NAVY)
-    c.rect(margin, y - row_h, width - 2 * margin, row_h, stroke=0, fill=1)
-    c.setFillColor(colors.white)
-    c.setFont("Helvetica-Bold", 9.5)
-    c.drawString(col_x[0] + 5, y - row_h + 6, "TOTAL")
-    c.drawRightString(col_x[3] - 5, y - row_h + 6, f"{total:,.0f} {DEVISE}".replace(",", " "))
-
-    c.setFillColor(MUTED)
-    c.setFont("Helvetica", 7.5)
-    c.drawString(margin, margin - 2, f"{len(depenses)} dépense(s) — {SOCIETE_NOM}")
-
-    c.showPage()
-    c.save()
-    buffer.seek(0)
-    return buffer
-
-
 @app.get("/api/paiements/{paiement_id}/quittance")
 def quittance_pdf(paiement_id: int, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     paiement = db.query(Paiement).get(paiement_id)
@@ -1579,9 +1047,6 @@ def quittance_pdf(paiement_id: int, request: Request, db: Session = Depends(get_
 
     if current_user.role == "proprietaire":
         if not maison or maison.proprietaire_id != current_user.id:
-            raise HTTPException(403, "Accès refusé à ce document")
-    elif current_user.role == "locataire":
-        if not bail or bail.locataire_id != current_user.locataire_id:
             raise HTTPException(403, "Accès refusé à ce document")
 
     if not paiement.verification_code:
@@ -1635,8 +1100,6 @@ def list_tickets(db: Session = Depends(get_db), current_user: User = Depends(get
     if current_user.role == "proprietaire":
         maison_ids = owned_maison_ids(db, current_user)
         q = q.filter(Ticket.maison_id.in_(maison_ids))
-    elif current_user.role == "locataire":
-        q = q.filter(Ticket.maison_id.in_(locataire_maison_ids(db, current_user)))
     return q.all()
 
 
@@ -1673,30 +1136,10 @@ def delete_ticket(ticket_id: int, db: Session = Depends(get_db), _: User = Depen
     return {"ok": True}
 
 
-CATEGORIE_LABELS = {
-    "salaire_gerant": "Salaire du gérant",
-    "entretien": "Entretien / réparations",
-    "taxes": "Taxes / impôts",
-    "transport": "Transport",
-    "autre": "Autre",
-}
-
-
 # ---------- Dépenses (gérant uniquement) ----------
 @app.get("/api/depenses", response_model=List[DepenseOut])
 def list_depenses(db: Session = Depends(get_db), _: User = Depends(require_gerant)):
     return db.query(Depense).order_by(Depense.date_depense.desc()).all()
-
-
-@app.get("/api/depenses/export/pdf")
-def export_depenses_pdf(db: Session = Depends(get_db), _: User = Depends(require_gerant)):
-    depenses = db.query(Depense).order_by(Depense.date_depense.desc()).all()
-    buffer = generer_depenses_pdf(depenses)
-    return StreamingResponse(
-        buffer,
-        media_type="application/pdf",
-        headers={"Content-Disposition": "attachment; filename=historique_depenses.pdf"},
-    )
 
 
 @app.post("/api/depenses", response_model=DepenseOut)
@@ -1730,27 +1173,130 @@ def delete_depense(depense_id: int, db: Session = Depends(get_db), _: User = Dep
     return {"ok": True}
 
 
+# ---------- Pièces justificatives (factures, reçus, photos d'achats) ----------
+PIECE_MAX_TAILLE = 10 * 1024 * 1024  # 10 Mo
+PIECE_TYPES_AUTORISES = {
+    "application/pdf": ".pdf",
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+}
+
+
+def piece_visible_par(piece: PieceJustificative, user: User, db: Session) -> bool:
+    if user.role == "gerant":
+        return True
+    if piece.maison_id is None:
+        return False  # document général : gérant uniquement
+    return piece.maison_id in owned_maison_ids(db, user)
+
+
+@app.get("/api/pieces", response_model=List[PieceOut])
+def list_pieces(maison_id: Optional[int] = None, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    q = db.query(PieceJustificative)
+    if current_user.role != "gerant":
+        ids = owned_maison_ids(db, current_user)
+        q = q.filter(PieceJustificative.maison_id.in_(ids))
+    if maison_id:
+        q = q.filter(PieceJustificative.maison_id == maison_id)
+    return q.order_by(PieceJustificative.date_upload.desc()).all()
+
+
+@app.post("/api/pieces", response_model=PieceOut)
+async def upload_piece(
+    titre: str = Form(...),
+    maison_id: Optional[str] = Form(None),
+    description: Optional[str] = Form(None),
+    montant: Optional[str] = Form(None),
+    fichier: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current: User = Depends(require_gerant),
+):
+    type_mime = (fichier.content_type or "").lower()
+    if type_mime not in PIECE_TYPES_AUTORISES:
+        raise HTTPException(400, "Type de fichier non autorisé (PDF ou image : JPG, PNG, WEBP, GIF)")
+    contenu = await fichier.read()
+    if len(contenu) > PIECE_MAX_TAILLE:
+        raise HTTPException(400, "Fichier trop volumineux (maximum 10 Mo)")
+    if not contenu:
+        raise HTTPException(400, "Fichier vide")
+
+    m_id: Optional[int] = None
+    if maison_id not in (None, "", "null"):
+        try:
+            m_id = int(maison_id)
+        except ValueError:
+            raise HTTPException(400, "Maison invalide")
+        if not db.query(Maison).get(m_id):
+            raise HTTPException(404, "Maison introuvable")
+
+    mt: Optional[float] = None
+    if montant not in (None, "", "null"):
+        try:
+            mt = float(montant)
+        except ValueError:
+            raise HTTPException(400, "Montant invalide")
+
+    piece = PieceJustificative(
+        maison_id=m_id,
+        titre=titre.strip(),
+        description=(description or "").strip() or None,
+        montant=mt,
+        nom_fichier=fichier.filename or f"piece{PIECE_TYPES_AUTORISES[type_mime]}",
+        type_mime=type_mime,
+        taille=len(contenu),
+        contenu=contenu,
+        uploaded_by=current.id,
+    )
+    db.add(piece)
+    db.commit()
+    db.refresh(piece)
+    return piece
+
+
+@app.get("/api/pieces/{piece_id}/fichier")
+def telecharger_piece(piece_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    piece = db.query(PieceJustificative).get(piece_id)
+    if not piece:
+        raise HTTPException(404, "Pièce introuvable")
+    if not piece_visible_par(piece, current_user, db):
+        raise HTTPException(403, "Accès refusé à cette pièce")
+    nom_ascii = "".join(c if c.isascii() and c not in '"\\' else "_" for c in piece.nom_fichier)
+    return Response(
+        content=piece.contenu,
+        media_type=piece.type_mime,
+        headers={"Content-Disposition": f'inline; filename="{nom_ascii}"'},
+    )
+
+
+@app.delete("/api/pieces/{piece_id}")
+def delete_piece(piece_id: int, db: Session = Depends(get_db), _: User = Depends(require_gerant)):
+    piece = db.query(PieceJustificative).get(piece_id)
+    if not piece:
+        raise HTTPException(404, "Pièce introuvable")
+    db.delete(piece)
+    db.commit()
+    return {"ok": True}
+
+
 # ---------- Observations (messages propriétaire -> gérant) ----------
 @app.get("/api/observations", response_model=List[ObservationOut])
 def list_observations(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     q = db.query(Observation)
-    if current_user.role in ("proprietaire", "locataire"):
+    if current_user.role == "proprietaire":
         q = q.filter(Observation.proprietaire_id == current_user.id)
     return q.order_by(Observation.date_creation.desc()).all()
 
 
 @app.post("/api/observations", response_model=ObservationOut)
 def create_observation(data: ObservationIn, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    if current_user.role not in ("proprietaire", "locataire"):
-        raise HTTPException(403, "Réservé aux propriétaires et locataires")
+    if current_user.role != "proprietaire":
+        raise HTTPException(403, "Réservé aux propriétaires")
     if data.maison_id:
         maison = db.query(Maison).get(data.maison_id)
-        if not maison:
-            raise HTTPException(403, "Ce bien n'existe pas")
-        if current_user.role == "proprietaire" and maison.proprietaire_id != current_user.id:
+        if not maison or maison.proprietaire_id != current_user.id:
             raise HTTPException(403, "Ce bien ne vous appartient pas")
-        if current_user.role == "locataire" and maison.id not in locataire_maison_ids(db, current_user):
-            raise HTTPException(403, "Ce bien ne vous concerne pas")
     observation = Observation(proprietaire_id=current_user.id, maison_id=data.maison_id, message=data.message)
     db.add(observation)
     db.commit()
@@ -1795,8 +1341,6 @@ def delete_observation(observation_id: int, db: Session = Depends(get_db), _: Us
 # ---------- Tableau de bord ----------
 @app.get("/api/dashboard")
 def dashboard(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    if current_user.role == "locataire":
-        raise HTTPException(403, "Non disponible pour ce rôle.")
     mois_courant = date.today().strftime("%Y-%m")
     is_owner = current_user.role == "proprietaire"
     maison_ids = owned_maison_ids(db, current_user) if is_owner else None
@@ -1860,8 +1404,6 @@ def _mois_range(n: int) -> List[str]:
 
 @app.get("/api/dashboard/evolution")
 def dashboard_evolution(mois: int = 6, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    if current_user.role == "locataire":
-        raise HTTPException(403, "Non disponible pour ce rôle.")
     is_owner = current_user.role == "proprietaire"
     maison_ids = owned_maison_ids(db, current_user) if is_owner else None
 
@@ -1931,7 +1473,8 @@ def analyse_ia(stats: dict) -> Optional[str]:
             "du bilan mensuel suivant, avec un ton professionnel destiné au gérant d'un parc immobilier. "
             "Mets en avant les points positifs, les points de vigilance (impayés, résultat net, évolution) "
             "et une recommandation concrète si pertinent. Ne répète pas les chiffres bruts sans les interpréter.\n\n"
-            f"Données du mois {stats['mois']} :\n"
+            + (f"Périmètre : uniquement la maison « {stats['maison_adresse']} ».\n" if stats.get("maison_adresse") else "Périmètre : l'ensemble du parc immobilier.\n")
+            + f"Données du mois {stats['mois']} :\n"
             f"- Loyers attendus : {stats['total_attendu']} {DEVISE}\n"
             f"- Loyers encaissés : {stats['total_encaisse']} {DEVISE}\n"
             f"- Taux d'encaissement : {stats['taux_encaissement']}%\n"
@@ -1966,15 +1509,37 @@ def analyse_ia(stats: dict) -> Optional[str]:
     return None
 
 
-def calculer_bilan(mois: str, db: Session) -> dict:
-    total_maisons = db.query(Maison).count()
-    maisons_occupees = db.query(Maison).filter(Maison.statut == "occupee").count()
+@app.get("/api/bilan/{mois}")
+def bilan_mensuel(mois: str, maison_id: Optional[int] = None, db: Session = Depends(get_db), _: User = Depends(require_gerant)):
+    # Périmètre : toutes les maisons, ou une maison précise si maison_id est fourni
+    maison_cible = None
+    if maison_id:
+        maison_cible = db.query(Maison).get(maison_id)
+        if not maison_cible:
+            raise HTTPException(404, "Maison introuvable")
+
+    q_maisons = db.query(Maison)
+    if maison_id:
+        q_maisons = q_maisons.filter(Maison.id == maison_id)
+    total_maisons = q_maisons.count()
+    maisons_occupees = q_maisons.filter(Maison.statut == "occupee").count()
     taux_occupation = round(maisons_occupees / total_maisons * 100, 1) if total_maisons else 0
 
-    baux_actifs = db.query(Bail).filter(Bail.statut == "actif").all()
+    q_baux = db.query(Bail).filter(Bail.statut == "actif")
+    if maison_id:
+        q_baux = q_baux.filter(Bail.maison_id == maison_id)
+    baux_actifs = q_baux.all()
     total_attendu = sum(b.loyer_mensuel for b in baux_actifs)
 
+    # Ids des baux du périmètre (tous statuts confondus) pour filtrer les paiements
+    if maison_id:
+        bail_ids_perimetre = {b.id for b in db.query(Bail.id).filter(Bail.maison_id == maison_id).all()}
+    else:
+        bail_ids_perimetre = None
+
     paiements_mois = db.query(Paiement).filter(Paiement.mois_concerne == mois).all()
+    if bail_ids_perimetre is not None:
+        paiements_mois = [p for p in paiements_mois if p.bail_id in bail_ids_perimetre]
     total_encaisse = sum(p.montant for p in paiements_mois if p.statut == "paye")
     taux_encaissement = round(total_encaisse / total_attendu * 100, 1) if total_attendu else 0
 
@@ -1988,7 +1553,10 @@ def calculer_bilan(mois: str, db: Session) -> dict:
     except Exception:
         raise HTTPException(400, "Format de mois invalide (attendu AAAA-MM)")
 
-    depenses_mois = db.query(Depense).filter(Depense.date_depense >= premier_jour, Depense.date_depense <= dernier_jour).all()
+    q_depenses = db.query(Depense).filter(Depense.date_depense >= premier_jour, Depense.date_depense <= dernier_jour)
+    if maison_id:
+        q_depenses = q_depenses.filter(Depense.maison_id == maison_id)
+    depenses_mois = q_depenses.all()
     total_depenses = sum(d.montant for d in depenses_mois)
     depenses_par_categorie = {}
     for d in depenses_mois:
@@ -1996,17 +1564,34 @@ def calculer_bilan(mois: str, db: Session) -> dict:
 
     resultat_net = total_encaisse - total_depenses
 
-    tickets_mois = db.query(Ticket).filter(Ticket.date_creation >= datetime.combine(premier_jour, datetime.min.time()),
-                                            Ticket.date_creation <= datetime.combine(dernier_jour, datetime.max.time())).all()
+    q_tickets = db.query(Ticket).filter(Ticket.date_creation >= datetime.combine(premier_jour, datetime.min.time()),
+                                        Ticket.date_creation <= datetime.combine(dernier_jour, datetime.max.time()))
+    if maison_id:
+        q_tickets = q_tickets.filter(Ticket.maison_id == maison_id)
+    tickets_mois = q_tickets.all()
     cout_tickets_mois = sum(t.cout for t in tickets_mois)
+
+    # Pièces justificatives rattachées au périmètre sur la période
+    q_pieces = db.query(PieceJustificative).filter(
+        PieceJustificative.date_upload >= datetime.combine(premier_jour, datetime.min.time()),
+        PieceJustificative.date_upload <= datetime.combine(dernier_jour, datetime.max.time()),
+    )
+    if maison_id:
+        q_pieces = q_pieces.filter(PieceJustificative.maison_id == maison_id)
+    nb_pieces_mois = q_pieces.count()
 
     mois_prec = mois_precedent(mois)
     paiements_mois_prec = db.query(Paiement).filter(Paiement.mois_concerne == mois_prec, Paiement.statut == "paye").all()
+    if bail_ids_perimetre is not None:
+        paiements_mois_prec = [p for p in paiements_mois_prec if p.bail_id in bail_ids_perimetre]
     total_encaisse_prec = sum(p.montant for p in paiements_mois_prec)
     variation_encaisse_pct = round((total_encaisse - total_encaisse_prec) / total_encaisse_prec * 100, 1) if total_encaisse_prec else None
 
     stats = {
         "mois": mois,
+        "maison_id": maison_id,
+        "maison_adresse": maison_cible.adresse if maison_cible else None,
+        "nb_pieces_justificatives": nb_pieces_mois,
         "total_maisons": total_maisons,
         "taux_occupation": taux_occupation,
         "total_attendu": total_attendu,
@@ -2036,151 +1621,6 @@ def calculer_bilan(mois: str, db: Session) -> dict:
     stats["genere_le"] = datetime.utcnow().isoformat()
     stats["societe"] = SOCIETE_NOM
     return stats
-
-
-@app.get("/api/bilan/{mois}")
-def bilan_mensuel(mois: str, db: Session = Depends(get_db), _: User = Depends(require_gerant)):
-    return calculer_bilan(mois, db)
-
-
-def generer_bilan_pdf(stats: dict) -> io.BytesIO:
-    buffer = io.BytesIO()
-    c = canvas.Canvas(buffer, pagesize=A4)
-    width, height = A4
-    margin = 15 * mm
-    header_h = 30 * mm
-
-    c.setStrokeColor(BORDER)
-    c.setLineWidth(1)
-    c.rect(margin - 6, margin - 6, width - 2 * (margin - 6), height - 2 * (margin - 6))
-    c.setFillColor(NAVY)
-    c.rect(0, height - header_h, width, header_h, stroke=0, fill=1)
-    c.setFillColor(GOLD)
-    c.rect(0, height - header_h - 2, width, 2, stroke=0, fill=1)
-    c.setFillColor(colors.white)
-    c.setFont("Helvetica-Bold", 20)
-    c.drawString(margin, height - 14 * mm, stats["societe"])
-    c.setFillColor(GOLD)
-    c.setFont("Helvetica-Oblique", 10)
-    c.drawString(margin, height - 20 * mm, SOCIETE_TAGLINE)
-    c.setFillColor(colors.white)
-    c.setFont("Helvetica-Bold", 14)
-    c.drawRightString(width - margin, height - 14 * mm, f"BILAN MENSUEL — {stats['mois']}")
-    c.setFont("Helvetica", 9)
-    c.drawRightString(width - margin, height - 20 * mm, f"Généré le {date.today().strftime('%d/%m/%Y')}")
-
-    y = height - header_h - 12 * mm
-
-    def ligne_kpi(label, valeur):
-        nonlocal y
-        c.setFillColor(LIGHT)
-        c.setStrokeColor(BORDER)
-        c.rect(margin, y - 8 * mm, width - 2 * margin, 8 * mm, stroke=1, fill=1)
-        c.setFillColor(TEXT_DARK)
-        c.setFont("Helvetica", 9.5)
-        c.drawString(margin + 6, y - 5.5 * mm, label)
-        c.setFont("Helvetica-Bold", 9.5)
-        c.drawRightString(width - margin - 6, y - 5.5 * mm, str(valeur))
-        y -= 8 * mm
-
-    c.setFillColor(NAVY)
-    c.setFont("Helvetica-Bold", 11)
-    c.drawString(margin, y, "Indicateurs clés")
-    y -= 10
-    ligne_kpi("Taux d'occupation du parc", f"{stats['taux_occupation']}%")
-    ligne_kpi("Loyers attendus", f"{stats['total_attendu']:,.0f} {DEVISE}".replace(",", " "))
-    ligne_kpi("Loyers encaissés", f"{stats['total_encaisse']:,.0f} {DEVISE}".replace(",", " "))
-    ligne_kpi("Taux d'encaissement", f"{stats['taux_encaissement']}%")
-    ligne_kpi("Nombre d'impayés", str(stats["nombre_impayes"]))
-    ligne_kpi("Dépenses du mois", f"{stats['total_depenses']:,.0f} {DEVISE}".replace(",", " "))
-    ligne_kpi("Résultat net", f"{stats['resultat_net']:,.0f} {DEVISE}".replace(",", " "))
-    ligne_kpi("Tickets de maintenance ouverts", str(stats["tickets_ouverts_periode"]))
-    y -= 6 * mm
-
-    c.setFillColor(NAVY)
-    c.setFont("Helvetica-Bold", 11)
-    c.drawString(margin, y, "Analyse")
-    y -= 14
-    c.setFillColor(TEXT_DARK)
-    c.setFont("Helvetica", 9.5)
-    from textwrap import wrap
-    for ligne in wrap(stats.get("analyse") or "", 100):
-        c.drawString(margin, y, ligne)
-        y -= 13
-
-    c.showPage()
-    c.save()
-    buffer.seek(0)
-    return buffer
-
-
-@app.get("/api/bilan/{mois}/pdf")
-def bilan_mensuel_pdf(mois: str, db: Session = Depends(get_db), _: User = Depends(require_gerant)):
-    stats = calculer_bilan(mois, db)
-    buffer = generer_bilan_pdf(stats)
-    return StreamingResponse(
-        buffer,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename=bilan_{mois}.pdf"},
-    )
-
-
-@app.get("/api/bilan/{mois}/excel")
-def bilan_mensuel_excel(mois: str, db: Session = Depends(get_db), _: User = Depends(require_gerant)):
-    if Workbook is None:
-        raise HTTPException(500, "Export Excel indisponible (openpyxl non installé).")
-    stats = calculer_bilan(mois, db)
-
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Bilan"
-    header_fill = PatternFill(start_color="12314F", end_color="12314F", fill_type="solid")
-    header_font = Font(color="FFFFFF", bold=True)
-
-    ws.append([f"Bilan mensuel — {stats['societe']} — {stats['mois']}"])
-    ws["A1"].font = Font(bold=True, size=14)
-    ws.append([])
-    ws.append(["Indicateur", "Valeur"])
-    for cell in ws[3]:
-        cell.fill = header_fill
-        cell.font = header_font
-
-    lignes = [
-        ("Taux d'occupation du parc (%)", stats["taux_occupation"]),
-        ("Loyers attendus", stats["total_attendu"]),
-        ("Loyers encaissés", stats["total_encaisse"]),
-        ("Taux d'encaissement (%)", stats["taux_encaissement"]),
-        ("Nombre d'impayés", stats["nombre_impayes"]),
-        ("Dépenses du mois", stats["total_depenses"]),
-        ("Résultat net", stats["resultat_net"]),
-        ("Tickets de maintenance ouverts", stats["tickets_ouverts_periode"]),
-        ("Coût des tickets du mois", stats["cout_tickets_mois"]),
-    ]
-    for label, valeur in lignes:
-        ws.append([label, valeur])
-
-    ws.append([])
-    ws.append(["Dépenses par catégorie"])
-    ws[f"A{ws.max_row}"].font = Font(bold=True)
-    for categorie, montant in stats.get("depenses_par_categorie", {}).items():
-        ws.append([categorie, montant])
-
-    ws.append([])
-    ws.append(["Analyse"])
-    ws[f"A{ws.max_row}"].font = Font(bold=True)
-    ws.append([stats.get("analyse") or ""])
-
-    ws.column_dimensions["A"].width = 36
-    ws.column_dimensions["B"].width = 20
-
-    buffer = io.BytesIO()
-    wb.save(buffer)
-    buffer.seek(0)
-    return StreamingResponse(
-        buffer,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename=bilan_{mois}.xlsx"},
-    )
 
 
 # ---------- Fichiers statiques (frontend) ----------
