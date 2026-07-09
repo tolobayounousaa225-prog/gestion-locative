@@ -940,7 +940,7 @@ function lancerRecherche() {
 
   const match = (txt) => (txt || "").toString().toLowerCase().includes(q);
 
-  const maisons = CACHE.maisons.filter(m => match(m.adresse) || match(m.proprietaire) || match(m.statut));
+  const maisons = CACHE.maisons.filter(m => match(maisonAdresse(m.id)) || match(m.nom_logement) || match(m.proprietaire) || match(m.statut));
   const locataires = CACHE.locataires.filter(l => match(l.nom) || match(l.telephone) || match(l.piece_identite));
   const baux = CACHE.baux.filter(b => match(maisonAdresse(b.maison_id)) || match(locataireNom(b.locataire_id)) || match(b.loyer_mensuel) || match(b.statut));
   const paiements = CACHE.paiements.filter(p => match(p.mois_concerne) || match(p.montant) || match(p.mode) || match(p.statut));
@@ -955,7 +955,7 @@ function lancerRecherche() {
   if (maisons.length) {
     html += `<div class="panel"><div class="panel-header"><strong>🏠 Maisons (${maisons.length})</strong></div>
       <table><thead><tr><th>Adresse</th><th>Statut</th><th>Loyer réf.</th></tr></thead><tbody>` +
-      maisons.map(m => `<tr onclick="showView('maisons')" style="cursor:pointer"><td>${m.adresse}</td><td>${badge(m.statut)}</td><td>${fmtFCFA(m.loyer_reference)}</td></tr>`).join("") +
+      maisons.map(m => `<tr onclick="showView('maisons')" style="cursor:pointer"><td>${maisonAdresse(m.id)}</td><td>${badge(m.statut)}</td><td>${fmtFCFA(m.loyer_reference)}</td></tr>`).join("") +
       `</tbody></table></div>`;
   }
   if (locataires.length) {
@@ -1455,7 +1455,7 @@ function renderUsers() {
       const sesMaisons = CACHE.maisons.filter(m => m.proprietaire_id === u.id);
       if (sesMaisons.length) {
         colonneMaisons = `<strong>${sesMaisons.length}</strong> — ` +
-          sesMaisons.map(m => m.adresse).join(", ");
+          sesMaisons.map(m => maisonAdresse(m.id)).join(", ");
       } else {
         colonneMaisons = `<span class="muted">Aucune maison rattachée</span>`;
       }

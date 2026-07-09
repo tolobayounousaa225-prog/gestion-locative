@@ -535,6 +535,20 @@ def owned_maison_ids(db: Session, user: User) -> List[int]:
     return [m.id for m in db.query(Maison.id).filter(Maison.proprietaire_id == user.id).all()]
 
 
+def libelle_logement(maison, db: Session) -> str:
+    """Retourne 'Nom du bâtiment — Nom du logement' pour un affichage sans répétition d'adresse."""
+    if not maison:
+        return "—"
+    base = maison.adresse
+    if maison.batiment_id:
+        bat = db.query(Batiment).get(maison.batiment_id)
+        if bat:
+            base = bat.nom
+    if maison.nom_logement:
+        return f"{base} — {maison.nom_logement}"
+    return base
+
+
 def journaliser(db: Session, user: Optional[User], action: str, objet: str = None, details: str = None) -> None:
     """Enregistre une action dans le journal d'activité (best-effort, ne bloque jamais l'opération)."""
     try:
@@ -1670,7 +1684,7 @@ def finances_rentabilite(annee: int = None, db: Session = Depends(get_db), _: Us
         total_depenses_global += charges
         lignes.append({
             "maison_id": maison.id,
-            "adresse": maison.adresse,
+            "adresse": libelle_logement(maison, db),
             "proprietaire": maison.proprietaire,
             "statut": maison.statut,
             "loyer_reference": maison.loyer_reference,
@@ -1873,7 +1887,7 @@ def echeancier(mois: str = None, db: Session = Depends(get_db), _: User = Depend
             etat = "du"
         lignes.append({
             "bail_id": b.id,
-            "maison": maison.adresse if maison else "—",
+            "maison": libelle_logement(maison, db) if maison else "—",
             "locataire": locataire.nom if locataire else "—",
             "loyer_mensuel": b.loyer_mensuel,
             "paye": paye,
@@ -2105,7 +2119,7 @@ def portail_data(token: str, db: Session = Depends(get_db)):
         paiements = db.query(Paiement).filter(Paiement.bail_id == b.id).order_by(Paiement.mois_concerne.desc()).all()
         baux_data.append({
             "bail_id": b.id,
-            "maison_adresse": maison.adresse if maison else "—",
+            "maison_adresse": libelle_logement(maison, db) if maison else "—",
             "statut": b.statut,
             "date_debut": b.date_debut.isoformat() if b.date_debut else None,
             "date_fin": b.date_fin.isoformat() if b.date_fin else None,
@@ -2351,7 +2365,7 @@ def bilan_mensuel(mois: str, maison_id: Optional[int] = None, db: Session = Depe
     stats = {
         "mois": mois,
         "maison_id": maison_id,
-        "maison_adresse": maison_cible.adresse if maison_cible else None,
+        "maison_adresse": libelle_logement(maison_cible, db) if maison_cible else None,
         "nb_pieces_justificatives": nb_pieces_mois,
         "total_maisons": total_maisons,
         "taux_occupation": taux_occupation,
