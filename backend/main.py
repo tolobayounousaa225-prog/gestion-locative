@@ -199,6 +199,19 @@ class Observation(Base):
     maison = relationship("Maison")
 
 
+class JournalActivite(Base):
+    """Journal d'activité : trace les actions importantes (création, modification, suppression,
+    connexion) pour audit et traçabilité."""
+    __tablename__ = "journal_activite"
+    id = Column(Integer, primary_key=True, index=True)
+    date_action = Column(DateTime, default=datetime.utcnow, index=True)
+    utilisateur_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    utilisateur_nom = Column(String, nullable=True)  # figé au moment de l'action (survit à la suppression du compte)
+    action = Column(String, nullable=False)  # creation / modification / suppression / connexion / paiement ...
+    objet = Column(String, nullable=True)     # maison / locataire / bail / paiement ...
+    details = Column(String, nullable=True)
+
+
 Base.metadata.create_all(bind=engine)
 
 # Migration légère : ajoute les colonnes manquantes si les tables existaient déjà sans elles.
@@ -444,6 +457,22 @@ def owned_maison_ids(db: Session, user: User) -> List[int]:
     return [m.id for m in db.query(Maison.id).filter(Maison.proprietaire_id == user.id).all()]
 
 
+def journaliser(db: Session, user: Optional[User], action: str, objet: str = None, details: str = None) -> None:
+    """Enregistre une action dans le journal d'activité (best-effort, ne bloque jamais l'opération)."""
+    try:
+        entree = JournalActivite(
+            utilisateur_id=user.id if user else None,
+            utilisateur_nom=user.nom if user else "Système",
+            action=action,
+            objet=objet,
+            details=details,
+        )
+        db.add(entree)
+        db.commit()
+    except Exception:
+        db.rollback()
+
+
 def generate_verification_code() -> str:
     return secrets.token_hex(8)  # 16 caractères hexadécimaux
 
@@ -493,6 +522,7 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     if not user or not verify_password(form_data.password, user.mot_de_passe_hash):
         raise HTTPException(status_code=401, detail="Email ou mot de passe incorrect")
     token = create_access_token({"sub": user.email})
+    journaliser(db, user, "connexion", "session", f"Connexion de {user.email}")
     return Token(access_token=token)
 
 
@@ -606,7 +636,7 @@ def list_maisons(db: Session = Depends(get_db), current_user: User = Depends(get
 
 
 @app.post("/api/maisons", response_model=MaisonOut)
-def create_maison(data: MaisonIn, db: Session = Depends(get_db), _: User = Depends(require_gerant)):
+def create_maison(data: MaisonIn, db: Session = Depends(get_db), current: User = Depends(require_gerant)):
     payload = data.model_dump()
     if payload.get("proprietaire_id") and not payload.get("proprietaire"):
         owner = db.query(User).get(payload["proprietaire_id"])
@@ -616,6 +646,7 @@ def create_maison(data: MaisonIn, db: Session = Depends(get_db), _: User = Depen
     db.add(maison)
     db.commit()
     db.refresh(maison)
+    journaliser(db, current, "creation", "maison", f"Maison « {maison.adresse} »")
     return maison
 
 
@@ -740,7 +771,7 @@ def list_baux(db: Session = Depends(get_db), current_user: User = Depends(get_cu
 
 
 @app.post("/api/baux", response_model=BailOut)
-def create_bail(data: BailIn, db: Session = Depends(get_db), _: User = Depends(require_gerant)):
+def create_bail(data: BailIn, db: Session = Depends(get_db), current: User = Depends(require_gerant)):
     if data.statut == "actif":
         bail_existant = db.query(Bail).filter(Bail.maison_id == data.maison_id, Bail.statut == "actif").first()
         if bail_existant:
@@ -752,6 +783,8 @@ def create_bail(data: BailIn, db: Session = Depends(get_db), _: User = Depends(r
         maison.statut = "occupee"
     db.commit()
     db.refresh(bail)
+    loc = db.query(Locataire).get(bail.locataire_id)
+    journaliser(db, current, "creation", "bail", f"Bail {maison.adresse if maison else ''} — {loc.nom if loc else ''}")
     return bail
 
 
@@ -797,12 +830,13 @@ def list_paiements(db: Session = Depends(get_db), current_user: User = Depends(g
 
 
 @app.post("/api/paiements", response_model=PaiementOut)
-def create_paiement(data: PaiementIn, db: Session = Depends(get_db), _: User = Depends(require_gerant)):
+def create_paiement(data: PaiementIn, db: Session = Depends(get_db), current: User = Depends(require_gerant)):
     paiement = Paiement(**data.model_dump())
     paiement.verification_code = generate_verification_code()
     db.add(paiement)
     db.commit()
     db.refresh(paiement)
+    journaliser(db, current, "paiement", "paiement", f"{paiement.montant:.0f} {DEVISE} — {paiement.mois_concerne} ({paiement.statut})")
     return paiement
 
 
@@ -1795,6 +1829,71 @@ def contrat_bail(bail_id: int, db: Session = Depends(get_db), _: User = Depends(
         pdf,
         media_type="application/pdf",
         headers={"Content-Disposition": f'inline; filename="contrat_bail_{bail_id:05d}.pdf"'},
+    )
+
+
+# ---------- Robustesse : journal d'activité & sauvegarde ----------
+@app.get("/api/journal")
+def liste_journal(limit: int = 200, db: Session = Depends(get_db), _: User = Depends(require_gerant)):
+    """Dernières entrées du journal d'activité (les plus récentes d'abord)."""
+    limit = max(1, min(limit, 1000))
+    entrees = db.query(JournalActivite).order_by(JournalActivite.date_action.desc()).limit(limit).all()
+    return [{
+        "id": e.id,
+        "date_action": e.date_action.isoformat() if e.date_action else None,
+        "utilisateur": e.utilisateur_nom or "—",
+        "action": e.action,
+        "objet": e.objet,
+        "details": e.details,
+    } for e in entrees]
+
+
+@app.get("/api/sauvegarde")
+def sauvegarde_base(db: Session = Depends(get_db), current: User = Depends(require_gerant)):
+    """Export complet de la base (hors contenus binaires des pièces) au format JSON,
+    pour archivage local par le gérant."""
+    def serial(v):
+        if isinstance(v, (datetime, date)):
+            return v.isoformat()
+        return v
+
+    def dump(model, exclude=()):
+        lignes = []
+        for obj in db.query(model).all():
+            d = {}
+            for col in model.__table__.columns:
+                if col.name in exclude:
+                    continue
+                d[col.name] = serial(getattr(obj, col.name))
+            lignes.append(d)
+        return lignes
+
+    data = {
+        "meta": {
+            "societe": SOCIETE_NOM,
+            "genere_le": datetime.utcnow().isoformat(),
+            "genere_par": current.nom,
+            "version": 1,
+        },
+        "users": dump(User, exclude=("mot_de_passe_hash", "reset_token", "reset_token_expiry")),
+        "maisons": dump(Maison),
+        "locataires": dump(Locataire),
+        "baux": dump(Bail),
+        "paiements": dump(Paiement),
+        "tickets": dump(Ticket),
+        "depenses": dump(Depense),
+        "observations": dump(Observation),
+        # Pièces justificatives : métadonnées seulement (le binaire "contenu" est exclu pour garder un fichier léger)
+        "pieces_justificatives": dump(PieceJustificative, exclude=("contenu",)),
+    }
+    import json
+    contenu = json.dumps(data, ensure_ascii=False, indent=2)
+    nom = f"sauvegarde_{date.today().strftime('%Y%m%d')}.json"
+    journaliser(db, current, "sauvegarde", "base", "Export JSON complet")
+    return Response(
+        content=contenu,
+        media_type="application/json; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{nom}"'},
     )
 
 

@@ -302,6 +302,7 @@
     <button data-view="relances" id="nav-relances" class="hidden">🔔 Relances</button>
     <button data-view="historique">🗂️ Historique</button>
     <button data-view="utilisateurs" id="nav-utilisateurs" class="hidden">🔑 Utilisateurs</button>
+    <button data-view="systeme" id="nav-systeme" class="hidden">🛡️ Système</button>
   </nav>
 
   <main>
@@ -666,6 +667,26 @@
         </table>
       </div>
     </section>
+
+    <!-- SYSTEME -->
+    <section class="view" id="view-systeme">
+      <div class="page-title"><div class="bar"></div><h2>Système & sauvegarde</h2></div>
+      <div class="panel">
+        <div class="panel-header"><strong>💾 Sauvegarde de la base de données</strong></div>
+        <p class="muted" style="margin:0 0 12px">Téléchargez une copie complète de vos données (maisons, locataires, baux, paiements, dépenses…) au format JSON. Conservez ce fichier précieusement : il vous permet de garder une archive de sécurité indépendante de l'hébergeur.</p>
+        <button class="gold" onclick="telechargerSauvegarde()">⬇️ Télécharger la sauvegarde</button>
+      </div>
+      <div class="panel">
+        <div class="panel-header">
+          <strong>📜 Journal d'activité</strong>
+          <button class="secondary" onclick="chargerJournal()">Actualiser</button>
+        </div>
+        <table>
+          <thead><tr><th>Date</th><th>Utilisateur</th><th>Action</th><th>Objet</th><th>Détails</th></tr></thead>
+          <tbody id="journal-list"></tbody>
+        </table>
+      </div>
+    </section>
   </main>
 
   <footer class="app-footer">
@@ -795,6 +816,7 @@ async function showApp() {
   document.getElementById("nav-bilan").classList.toggle("hidden", !isGerant);
   document.getElementById("nav-finances").classList.toggle("hidden", !isGerant);
   document.getElementById("nav-relances").classList.toggle("hidden", !isGerant);
+  document.getElementById("nav-systeme").classList.toggle("hidden", !isGerant);
   document.getElementById("observations-title").textContent = isGerant ? "Boîte à messages" : "Mes observations";
 
   const bilanInput = document.getElementById("bilan-mois-input");
@@ -822,6 +844,7 @@ function showView(name) {
   if (name === "finances") initFinances();
   if (name === "relances") initRelances();
   if (name === "recherche") setTimeout(() => document.getElementById("recherche-input")?.focus(), 50);
+  if (name === "systeme") chargerJournal();
 }
 
 // ---------- Data loading ----------
@@ -1479,6 +1502,46 @@ async function repondreObservation(id) {
 }
 
 // ---------- Bilan mensuel ----------
+// ---------- Système & sauvegarde ----------
+async function chargerJournal() {
+  const tbody = document.getElementById("journal-list");
+  tbody.innerHTML = `<tr><td colspan="5" class="empty-note">Chargement...</td></tr>`;
+  try {
+    const entrees = await apiFetch("/journal?limit=200");
+    const icone = { connexion: "🔑", creation: "➕", modification: "✏️", suppression: "🗑️", paiement: "💰", sauvegarde: "💾" };
+    tbody.innerHTML = entrees.map(e => {
+      const d = e.date_action ? new Date(e.date_action).toLocaleString("fr-FR") : "—";
+      return `<tr>
+        <td style="white-space:nowrap">${d}</td>
+        <td>${e.utilisateur}</td>
+        <td>${icone[e.action] || ""} ${e.action}</td>
+        <td>${e.objet || "—"}</td>
+        <td>${e.details || "—"}</td>
+      </tr>`;
+    }).join("") || `<tr><td colspan="5" class="empty-note">Aucune activité enregistrée</td></tr>`;
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="5" class="empty-note">Erreur : ${err.message}</td></tr>`;
+  }
+}
+
+async function telechargerSauvegarde() {
+  try {
+    const res = await fetch(`${API}/sauvegarde`, { headers: authHeaders() });
+    if (!res.ok) throw new Error("Sauvegarde impossible");
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `sauvegarde_${new Date().toISOString().slice(0, 10).replace(/-/g, "")}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
 // ---------- Relances & échéancier ----------
 function initRelances() {
   const input = document.getElementById("relances-mois");
