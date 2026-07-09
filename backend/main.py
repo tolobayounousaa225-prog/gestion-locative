@@ -2357,30 +2357,40 @@ def analyse_ia(stats: dict) -> Optional[str]:
 
 
 @app.get("/api/bilan/{mois}")
-def bilan_mensuel(mois: str, maison_id: Optional[int] = None, db: Session = Depends(get_db), _: User = Depends(require_gerant)):
-    # Périmètre : toutes les maisons, ou une maison précise si maison_id est fourni
+def bilan_mensuel(mois: str, maison_id: Optional[int] = None, batiment_id: Optional[int] = None, db: Session = Depends(get_db), _: User = Depends(require_gerant)):
+    # Périmètre : tout le parc, un logement précis (maison_id), ou tout un bâtiment (batiment_id)
     maison_cible = None
+    batiment_cible = None
+    perimetre_ids = None  # None = tout le parc ; sinon liste d'ids de logements
     if maison_id:
         maison_cible = db.query(Maison).get(maison_id)
         if not maison_cible:
-            raise HTTPException(404, "Maison introuvable")
+            raise HTTPException(404, "Logement introuvable")
+        perimetre_ids = [maison_id]
+    elif batiment_id:
+        batiment_cible = db.query(Batiment).get(batiment_id)
+        if not batiment_cible:
+            raise HTTPException(404, "Bâtiment introuvable")
+        perimetre_ids = [m.id for m in db.query(Maison.id).filter(Maison.batiment_id == batiment_id).all()]
+        if not perimetre_ids:
+            perimetre_ids = [-1]  # bâtiment vide : aucun logement
 
     q_maisons = db.query(Maison)
-    if maison_id:
-        q_maisons = q_maisons.filter(Maison.id == maison_id)
+    if perimetre_ids is not None:
+        q_maisons = q_maisons.filter(Maison.id.in_(perimetre_ids))
     total_maisons = q_maisons.count()
     maisons_occupees = q_maisons.filter(Maison.statut == "occupee").count()
     taux_occupation = round(maisons_occupees / total_maisons * 100, 1) if total_maisons else 0
 
     q_baux = db.query(Bail).filter(Bail.statut == "actif")
-    if maison_id:
-        q_baux = q_baux.filter(Bail.maison_id == maison_id)
+    if perimetre_ids is not None:
+        q_baux = q_baux.filter(Bail.maison_id.in_(perimetre_ids))
     baux_actifs = q_baux.all()
     total_attendu = sum(b.loyer_mensuel for b in baux_actifs)
 
     # Ids des baux du périmètre (tous statuts confondus) pour filtrer les paiements
-    if maison_id:
-        bail_ids_perimetre = {b.id for b in db.query(Bail.id).filter(Bail.maison_id == maison_id).all()}
+    if perimetre_ids is not None:
+        bail_ids_perimetre = {b.id for b in db.query(Bail.id).filter(Bail.maison_id.in_(perimetre_ids)).all()}
     else:
         bail_ids_perimetre = None
 
@@ -2401,8 +2411,8 @@ def bilan_mensuel(mois: str, maison_id: Optional[int] = None, db: Session = Depe
         raise HTTPException(400, "Format de mois invalide (attendu AAAA-MM)")
 
     q_depenses = db.query(Depense).filter(Depense.date_depense >= premier_jour, Depense.date_depense <= dernier_jour)
-    if maison_id:
-        q_depenses = q_depenses.filter(Depense.maison_id == maison_id)
+    if perimetre_ids is not None:
+        q_depenses = q_depenses.filter(Depense.maison_id.in_(perimetre_ids))
     depenses_mois = q_depenses.all()
     total_depenses = sum(d.montant for d in depenses_mois)
     depenses_par_categorie = {}
@@ -2413,8 +2423,8 @@ def bilan_mensuel(mois: str, maison_id: Optional[int] = None, db: Session = Depe
 
     q_tickets = db.query(Ticket).filter(Ticket.date_creation >= datetime.combine(premier_jour, datetime.min.time()),
                                         Ticket.date_creation <= datetime.combine(dernier_jour, datetime.max.time()))
-    if maison_id:
-        q_tickets = q_tickets.filter(Ticket.maison_id == maison_id)
+    if perimetre_ids is not None:
+        q_tickets = q_tickets.filter(Ticket.maison_id.in_(perimetre_ids))
     tickets_mois = q_tickets.all()
     cout_tickets_mois = sum(t.cout for t in tickets_mois)
 
@@ -2423,8 +2433,8 @@ def bilan_mensuel(mois: str, maison_id: Optional[int] = None, db: Session = Depe
         PieceJustificative.date_upload >= datetime.combine(premier_jour, datetime.min.time()),
         PieceJustificative.date_upload <= datetime.combine(dernier_jour, datetime.max.time()),
     )
-    if maison_id:
-        q_pieces = q_pieces.filter(PieceJustificative.maison_id == maison_id)
+    if perimetre_ids is not None:
+        q_pieces = q_pieces.filter(PieceJustificative.maison_id.in_(perimetre_ids))
     nb_pieces_mois = q_pieces.count()
 
     mois_prec = mois_precedent(mois)
@@ -2437,7 +2447,9 @@ def bilan_mensuel(mois: str, maison_id: Optional[int] = None, db: Session = Depe
     stats = {
         "mois": mois,
         "maison_id": maison_id,
-        "maison_adresse": libelle_logement(maison_cible, db) if maison_cible else None,
+        "batiment_id": batiment_id,
+        "maison_adresse": (libelle_logement(maison_cible, db) if maison_cible
+                           else (f"Bâtiment {batiment_cible.nom}" if batiment_cible else None)),
         "nb_pieces_justificatives": nb_pieces_mois,
         "total_maisons": total_maisons,
         "taux_occupation": taux_occupation,

@@ -565,7 +565,8 @@
       <div class="panel no-print">
         <div class="bilan-toolbar">
           <div><label>Mois</label><input type="month" id="bilan-mois-input"></div>
-          <div><label>Périmètre</label><select id="bilan-maison-select"><option value="">Toutes les maisons</option></select></div>
+          <div><label>Bâtiment</label><select id="bilan-batiment-select" onchange="onBilanBatimentChange()"><option value="">Tous les bâtiments</option></select></div>
+          <div><label>Logement (optionnel)</label><select id="bilan-maison-select"><option value="">Tout le bâtiment</option></select></div>
           <div><button type="button" onclick="genererBilan()">Générer le bilan</button></div>
           <div><button type="button" class="secondary" id="bilan-print-btn" onclick="window.print()" disabled>🖨️ Imprimer</button></div>
         </div>
@@ -1895,15 +1896,41 @@ async function exporterCompta(type) {
   }
 }
 
+function remplirBilanLogements() {
+  const batSelect = document.getElementById("bilan-batiment-select");
+  const maisonSelect = document.getElementById("bilan-maison-select");
+  if (!maisonSelect) return;
+  const batId = batSelect && batSelect.value ? Number(batSelect.value) : null;
+  const val = maisonSelect.value;
+  // Si un bâtiment est choisi, ne montrer que ses logements ; sinon tous
+  const logements = batId ? CACHE.maisons.filter(m => m.batiment_id === batId) : CACHE.maisons;
+  const label = batId ? "Tout le bâtiment" : "Tous les logements";
+  const options = logements.map(m => `<option value="${m.id}">${m.nom_logement || maisonAdresse(m.id)}</option>`).join("");
+  maisonSelect.innerHTML = `<option value="">${label}</option>` + options;
+  maisonSelect.value = val;
+}
+
+function onBilanBatimentChange() {
+  // Quand on change de bâtiment, réinitialiser le logement et rafraîchir la liste
+  const maisonSelect = document.getElementById("bilan-maison-select");
+  if (maisonSelect) maisonSelect.value = "";
+  remplirBilanLogements();
+}
+
 async function genererBilan() {
   const mois = document.getElementById("bilan-mois-input").value;
   if (!mois) return;
+  const batSelect = document.getElementById("bilan-batiment-select");
   const maisonSelect = document.getElementById("bilan-maison-select");
+  const batId = batSelect && batSelect.value ? batSelect.value : "";
   const maisonId = maisonSelect && maisonSelect.value ? maisonSelect.value : "";
   const loading = document.getElementById("bilan-loading");
   loading.textContent = "Génération du bilan en cours...";
   try {
-    const b = await apiFetch(`/bilan/${mois}${maisonId ? `?maison_id=${maisonId}` : ""}`);
+    let query = "";
+    if (maisonId) query = `?maison_id=${maisonId}`;       // logement précis prioritaire
+    else if (batId) query = `?batiment_id=${batId}`;      // sinon tout le bâtiment
+    const b = await apiFetch(`/bilan/${mois}${query}`);
     loading.textContent = "";
     document.getElementById("bilan-print-btn").disabled = false;
 
@@ -1911,7 +1938,7 @@ async function genererBilan() {
       ? `Bilan mensuel — ${b.societe} · ${b.maison_adresse}`
       : `Bilan mensuel — ${b.societe}`;
     document.getElementById("bilan-souscritre").textContent =
-      `Période : ${b.mois} · Périmètre : ${b.maison_adresse || "Toutes les maisons"} · Généré le ${new Date(b.genere_le).toLocaleString("fr-FR")}`;
+      `Période : ${b.mois} · Périmètre : ${b.maison_adresse || "Tout le parc"} · Généré le ${new Date(b.genere_le).toLocaleString("fr-FR")}`;
 
     document.getElementById("bilan-cards").innerHTML = `
       <div class="card"><div class="value">${b.total_attendu}</div><div class="label">Loyers attendus</div></div>
@@ -1988,11 +2015,15 @@ function fillSelectors() {
     historiqueMaisonFiltre.innerHTML = `<option value="">Toutes les maisons</option>` + maisonOptions;
     historiqueMaisonFiltre.value = val;
   }
+  const bilanBatiment = document.getElementById("bilan-batiment-select");
+  if (bilanBatiment) {
+    const val = bilanBatiment.value;
+    bilanBatiment.innerHTML = `<option value="">Tous les bâtiments</option>` + batimentOptions;
+    bilanBatiment.value = val;
+  }
   const bilanMaison = document.getElementById("bilan-maison-select");
   if (bilanMaison) {
-    const val = bilanMaison.value;
-    bilanMaison.innerHTML = `<option value="">Toutes les maisons</option>` + maisonOptions;
-    bilanMaison.value = val;
+    remplirBilanLogements();
   }
   const pieceMaison = document.getElementById("piece-maison-select");
   if (pieceMaison) {
