@@ -143,6 +143,12 @@
     margin-left: auto; background: var(--gold); color: #2b2100; border-radius: 999px;
     font-size: 10px; padding: 1px 7px; font-weight: 800;
   }
+  .nav-section {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 1px; font-weight: 700;
+    color: rgba(201,162,39,.75); padding: 14px 14px 5px; margin-top: 4px;
+    border-top: 1px solid rgba(255,255,255,.07);
+  }
+  .nav-section:first-of-type { border-top: none; margin-top: 0; }
 
   /* Colonne de contenu à droite */
   .content-col { flex: 1; min-width: 0; display: flex; flex-direction: column; }
@@ -242,6 +248,14 @@
   body.dark .alerte-ok { background: #14251a; border-color: #235c34; color: #6ee7a0; }
   tr.masse-solde { opacity: .55; }
   tr.masse-solde td { background: rgba(22,163,74,.05); }
+  .filtres-recherche { display: flex; flex-wrap: wrap; gap: 7px; margin: 12px 0 4px; }
+  .filtre-chip {
+    background: transparent; border: 1.5px solid var(--border); color: var(--muted);
+    padding: 6px 13px; border-radius: 999px; font-size: 12.5px; font-weight: 600; transition: all .15s;
+  }
+  .filtre-chip:hover { border-color: var(--gold); color: var(--text); }
+  .filtre-chip.active { background: var(--navy); border-color: var(--navy); color: #fff; }
+  body.dark .filtre-chip.active { background: var(--gold); border-color: var(--gold); color: #2b2100; }
 
   .panel { background: var(--card); border-radius: 12px; padding: 20px; box-shadow: 0 1px 4px rgba(18,49,79,.08); margin-bottom: 20px; }
   .panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
@@ -378,19 +392,27 @@
     </div>
     <button data-view="dashboard" class="active">📊 Tableau de bord</button>
     <button data-view="recherche">🔍 Recherche</button>
-    <button data-view="maisons">🏠 Maisons</button>
+
+    <div class="nav-section">Gestion locative</div>
     <button data-view="batiments" id="nav-batiments" class="hidden">🏢 Bâtiments</button>
+    <button data-view="maisons">🏠 Logements</button>
     <button data-view="locataires">👥 Locataires</button>
     <button data-view="baux">📃 Baux</button>
     <button data-view="paiements">💰 Paiements</button>
     <button data-view="tickets">🔧 Maintenance</button>
+
+    <div class="nav-section">Finances & suivi</div>
     <button data-view="depenses" id="nav-depenses" class="hidden">💸 Dépenses</button>
-    <button data-view="pieces">🧾 Pièces justif.</button>
-    <button data-view="observations">✉️ Observations<span id="obs-badge" class="nav-badge hidden">0</span></button>
-    <button data-view="bilan" id="nav-bilan" class="hidden">📈 Bilan</button>
     <button data-view="finances" id="nav-finances" class="hidden">💹 Finances</button>
     <button data-view="relances" id="nav-relances" class="hidden">🔔 Relances</button>
+    <button data-view="bilan" id="nav-bilan" class="hidden">📈 Bilan</button>
+
+    <div class="nav-section">Documents & échanges</div>
+    <button data-view="pieces">🧾 Pièces justif.</button>
+    <button data-view="observations">✉️ Observations<span id="obs-badge" class="nav-badge hidden">0</span></button>
     <button data-view="historique">🗂️ Historique</button>
+
+    <div class="nav-section gerant-only">Administration</div>
     <button data-view="utilisateurs" id="nav-utilisateurs" class="hidden">🔑 Utilisateurs</button>
     <button data-view="systeme" id="nav-systeme" class="hidden">🛡️ Système</button>
   </nav>
@@ -423,7 +445,15 @@
     <section class="view" id="view-recherche">
       <div class="page-title"><div class="bar"></div><h2>Recherche globale</h2></div>
       <div class="panel">
-        <input type="text" id="recherche-input" placeholder="Rechercher un locataire, une maison, un montant..." oninput="lancerRecherche()" autocomplete="off" style="font-size:15px">
+        <input type="text" id="recherche-input" placeholder="Rechercher un locataire, un logement, un montant, un mois..." oninput="lancerRecherche()" autocomplete="off" style="font-size:15px">
+        <div class="filtres-recherche" id="filtres-recherche">
+          <button class="filtre-chip active" data-filtre="tout" onclick="setFiltreRecherche('tout')">Tout</button>
+          <button class="filtre-chip" data-filtre="batiments" onclick="setFiltreRecherche('batiments')">🏢 Bâtiments</button>
+          <button class="filtre-chip" data-filtre="maisons" onclick="setFiltreRecherche('maisons')">🏠 Logements</button>
+          <button class="filtre-chip" data-filtre="locataires" onclick="setFiltreRecherche('locataires')">👥 Locataires</button>
+          <button class="filtre-chip" data-filtre="baux" onclick="setFiltreRecherche('baux')">📃 Baux</button>
+          <button class="filtre-chip" data-filtre="paiements" onclick="setFiltreRecherche('paiements')">💰 Paiements</button>
+        </div>
         <div class="empty-note" id="recherche-hint">Tapez au moins 2 caractères pour lancer la recherche.</div>
       </div>
       <div id="recherche-resultats"></div>
@@ -1077,6 +1107,13 @@ function toggleTheme() {
 })();
 
 // ---------- Recherche globale ----------
+let _filtreRecherche = "tout";
+function setFiltreRecherche(f) {
+  _filtreRecherche = f;
+  document.querySelectorAll(".filtre-chip").forEach(c => c.classList.toggle("active", c.dataset.filtre === f));
+  lancerRecherche();
+}
+
 function lancerRecherche() {
   const q = (document.getElementById("recherche-input").value || "").trim().toLowerCase();
   const hint = document.getElementById("recherche-hint");
@@ -1089,22 +1126,31 @@ function lancerRecherche() {
   hint.textContent = "";
 
   const match = (txt) => (txt || "").toString().toLowerCase().includes(q);
+  const f = _filtreRecherche;
+  const inclure = (cat) => f === "tout" || f === cat;
 
-  const maisons = CACHE.maisons.filter(m => match(maisonAdresse(m.id)) || match(m.nom_logement) || match(m.proprietaire) || match(m.statut));
-  const locataires = CACHE.locataires.filter(l => match(l.nom) || match(l.telephone) || match(l.piece_identite));
-  const baux = CACHE.baux.filter(b => match(maisonAdresse(b.maison_id)) || match(locataireNom(b.locataire_id)) || match(b.loyer_mensuel) || match(b.statut));
-  const paiements = CACHE.paiements.filter(p => match(p.mois_concerne) || match(p.montant) || match(p.mode) || match(p.statut));
+  const batiments = inclure("batiments") ? (CACHE.batiments || []).filter(b => match(b.nom) || match(b.adresse) || match(b.proprietaire)) : [];
+  const maisons = inclure("maisons") ? CACHE.maisons.filter(m => match(maisonAdresse(m.id)) || match(m.nom_logement) || match(m.proprietaire) || match(m.statut)) : [];
+  const locataires = inclure("locataires") ? CACHE.locataires.filter(l => match(l.nom) || match(l.telephone) || match(l.piece_identite)) : [];
+  const baux = inclure("baux") ? CACHE.baux.filter(b => match(maisonAdresse(b.maison_id)) || match(locataireNom(b.locataire_id)) || match(b.loyer_mensuel) || match(b.statut)) : [];
+  const paiements = inclure("paiements") ? CACHE.paiements.filter(p => match(p.mois_concerne) || match(p.montant) || match(p.mode) || match(p.statut)) : [];
 
-  const total = maisons.length + locataires.length + baux.length + paiements.length;
+  const total = batiments.length + maisons.length + locataires.length + baux.length + paiements.length;
   if (total === 0) {
     box.innerHTML = `<div class="panel"><div class="empty-note">Aucun résultat pour « ${q} »</div></div>`;
     return;
   }
 
   let html = "";
+  if (batiments.length) {
+    html += `<div class="panel"><div class="panel-header"><strong>🏢 Bâtiments (${batiments.length})</strong></div>
+      <table><thead><tr><th>Nom</th><th>Adresse</th><th>Propriétaire</th><th>Logements</th></tr></thead><tbody>` +
+      batiments.map(b => `<tr onclick="showView('batiments')" style="cursor:pointer"><td><strong>${b.nom}</strong></td><td>${b.adresse}</td><td>${b.proprietaire || "—"}</td><td>${b.nb_logements}</td></tr>`).join("") +
+      `</tbody></table></div>`;
+  }
   if (maisons.length) {
-    html += `<div class="panel"><div class="panel-header"><strong>🏠 Maisons (${maisons.length})</strong></div>
-      <table><thead><tr><th>Adresse</th><th>Statut</th><th>Loyer réf.</th></tr></thead><tbody>` +
+    html += `<div class="panel"><div class="panel-header"><strong>🏠 Logements (${maisons.length})</strong></div>
+      <table><thead><tr><th>Logement</th><th>Statut</th><th>Loyer réf.</th></tr></thead><tbody>` +
       maisons.map(m => `<tr onclick="showView('maisons')" style="cursor:pointer"><td>${maisonAdresse(m.id)}</td><td>${badge(m.statut)}</td><td>${fmtFCFA(m.loyer_reference)}</td></tr>`).join("") +
       `</tbody></table></div>`;
   }
@@ -1116,7 +1162,7 @@ function lancerRecherche() {
   }
   if (baux.length) {
     html += `<div class="panel"><div class="panel-header"><strong>📃 Baux (${baux.length})</strong></div>
-      <table><thead><tr><th>Maison</th><th>Locataire</th><th>Loyer</th><th>Statut</th></tr></thead><tbody>` +
+      <table><thead><tr><th>Logement</th><th>Locataire</th><th>Loyer</th><th>Statut</th></tr></thead><tbody>` +
       baux.map(b => `<tr onclick="showView('baux')" style="cursor:pointer"><td>${maisonAdresse(b.maison_id)}</td><td>${locataireNom(b.locataire_id)}</td><td>${fmtFCFA(b.loyer_mensuel)}</td><td>${badge(b.statut)}</td></tr>`).join("") +
       `</tbody></table></div>`;
   }
