@@ -257,6 +257,30 @@
   .filtre-chip.active { background: var(--navy); border-color: var(--navy); color: #fff; }
   body.dark .filtre-chip.active { background: var(--gold); border-color: var(--gold); color: #2b2100; }
 
+  /* Modale */
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: flex; align-items: center; justify-content: center; z-index: 100; padding: 20px; backdrop-filter: blur(2px); }
+  .modal-box { background: var(--card); border-radius: 16px; max-width: 760px; width: 100%; max-height: 88vh; overflow-y: auto; box-shadow: 0 20px 60px rgba(0,0,0,.3); animation: fadeIn .2s ease; }
+  .modal-head { display: flex; align-items: center; justify-content: space-between; padding: 18px 22px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--card); border-radius: 16px 16px 0 0; }
+  .modal-head strong { font-size: 16px; color: var(--navy); }
+  body.dark .modal-head strong { color: #7ea2c9; }
+  .modal-close { background: transparent; border: none; font-size: 18px; color: var(--muted); cursor: pointer; padding: 4px 8px; border-radius: 8px; }
+  .modal-close:hover { background: var(--bg); }
+  .modal-body { padding: 20px 22px; }
+  .fiche-resume { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px,1fr)); gap: 10px; margin-bottom: 18px; }
+  .fiche-stat { background: var(--bg); border-radius: 10px; padding: 12px; text-align: center; }
+  .fiche-stat .v { font-size: 20px; font-weight: 800; color: var(--navy); }
+  body.dark .fiche-stat .v { color: #7ea2c9; }
+  .fiche-stat .l { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .fiche-section { font-weight: 700; color: var(--navy); margin: 16px 0 8px; font-size: 14px; }
+  body.dark .fiche-section { color: #7ea2c9; }
+
+  /* Galerie photos */
+  .photo-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px,1fr)); gap: 10px; margin-top: 10px; }
+  .photo-thumb { position: relative; border-radius: 10px; overflow: hidden; aspect-ratio: 4/3; border: 1px solid var(--border); background: var(--bg); }
+  .photo-thumb img { width: 100%; height: 100%; object-fit: cover; cursor: pointer; }
+  .photo-thumb .photo-legende { position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,.6); color: #fff; font-size: 11px; padding: 3px 6px; }
+  .photo-thumb .photo-del { position: absolute; top: 4px; right: 4px; background: rgba(220,38,38,.9); color: #fff; border: none; border-radius: 6px; width: 22px; height: 22px; cursor: pointer; font-size: 12px; }
+
   .panel { background: var(--card); border-radius: 12px; padding: 20px; box-shadow: 0 1px 4px rgba(18,49,79,.08); margin-bottom: 20px; }
   .panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
   .panel-header strong { color: var(--navy); font-size: 14.5px; }
@@ -917,6 +941,17 @@
   </div>
 </div>
 
+<!-- MODALE (fiche locataire, etc.) -->
+<div id="modal-overlay" class="modal-overlay hidden" onclick="fermerModal(event)">
+  <div class="modal-box" onclick="event.stopPropagation()">
+    <div class="modal-head">
+      <strong id="modal-titre">—</strong>
+      <button class="modal-close" onclick="fermerModal()">✕</button>
+    </div>
+    <div id="modal-body" class="modal-body"></div>
+  </div>
+</div>
+
 <script>
 const API = "/api";
 let TOKEN = localStorage.getItem("gl_token") || null;
@@ -1353,6 +1388,7 @@ function renderBatiments() {
       <td>${b.proprietaire || "—"}</td>
       <td>${b.nb_logements} logement(s)</td>
       <td class="actions-row ${isGerant ? "" : "hidden"}">
+        <button class="secondary" onclick="ouvrirPhotos('batiment', ${b.id}, ${JSON.stringify(b.nom).replace(/"/g, '&quot;')})">📷 Photos</button>
         <button class="secondary" onclick='editBatiment(${JSON.stringify(b).replace(/'/g, "&apos;")})'>Modifier</button>
         <button class="danger" onclick="deleteItem('batiments', ${b.id})">Suppr.</button>
       </td>
@@ -1420,6 +1456,7 @@ function renderMaisons() {
       <td>${m.nb_pieces}</td>
       <td>${m.loyer_reference}</td><td>${badge(m.statut)}</td>
       <td class="actions-row gerant-only ${ME && ME.role !== 'gerant' ? 'hidden' : ''}">
+        <button class="secondary" onclick="ouvrirPhotos('maison', ${m.id}, ${JSON.stringify((m.nom_logement || 'Logement')).replace(/"/g, '&quot;')})">📷 Photos</button>
         <button class="secondary" onclick='editMaison(${JSON.stringify(m).replace(/'/g, "&apos;")})'>Modifier</button>
         <button class="danger" onclick="deleteItem('maisons', ${m.id})">Suppr.</button>
       </td>
@@ -1470,12 +1507,139 @@ function annulerEditLocataire() {
   document.getElementById("locataire-cancel-btn").classList.add("hidden");
 }
 
+// ---------- Modale & fiche locataire ----------
+function ouvrirModal(titre, contenuHtml) {
+  document.getElementById("modal-titre").textContent = titre;
+  document.getElementById("modal-body").innerHTML = contenuHtml;
+  document.getElementById("modal-overlay").classList.remove("hidden");
+}
+function fermerModal(e) {
+  if (e && e.target && e.target.id !== "modal-overlay" && e.type === "click" && e.currentTarget.id === "modal-overlay" && e.target.id !== "modal-overlay") return;
+  document.getElementById("modal-overlay").classList.add("hidden");
+}
+
+async function ouvrirFicheLocataire(id) {
+  ouvrirModal("Fiche locataire", `<div class="empty-note">Chargement...</div>`);
+  try {
+    const d = await apiFetch(`/locataires/${id}/fiche`);
+    const l = d.locataire, r = d.resume;
+    let html = `
+      <div class="fiche-resume">
+        <div class="fiche-stat"><div class="v">${r.nb_baux}</div><div class="l">Baux (${r.nb_baux_actifs} actif·s)</div></div>
+        <div class="fiche-stat"><div class="v">${fmtFCFA(r.total_paye)}</div><div class="l">Total payé</div></div>
+        <div class="fiche-stat"><div class="v">${r.nb_signalements}</div><div class="l">Signalements</div></div>
+      </div>
+      <div class="muted" style="font-size:13px">
+        📞 ${l.telephone || "—"} &nbsp;·&nbsp; 🪪 ${l.piece_identite || "—"} &nbsp;·&nbsp; 🆘 ${l.contact_urgence || "—"}
+        ${l.archive ? ' &nbsp;·&nbsp; <span style="color:#c0392b">Archivé</span>' : ""}
+      </div>`;
+
+    d.baux.forEach(b => {
+      html += `<div class="fiche-section">📃 ${b.logement} — ${badge(b.statut)}</div>
+        <div class="muted" style="font-size:12.5px;margin-bottom:6px">Du ${b.date_debut || "?"} ${b.date_fin ? "au " + b.date_fin : "(en cours)"} · Loyer ${fmtFCFA(b.loyer_mensuel)} · Caution ${fmtFCFA(b.caution)}</div>`;
+      if (b.paiements.length) {
+        html += `<table><thead><tr><th>Mois</th><th>Montant</th><th>Statut</th><th>Date</th></tr></thead><tbody>` +
+          b.paiements.map(p => `<tr><td>${p.mois_concerne}</td><td>${fmtFCFA(p.montant)}</td><td>${badge(p.statut)}</td><td>${p.date_paiement || "—"}</td></tr>`).join("") +
+          `</tbody></table>`;
+      } else {
+        html += `<div class="empty-note">Aucun paiement</div>`;
+      }
+    });
+    if (!d.baux.length) html += `<div class="empty-note">Aucun bail</div>`;
+
+    if (d.tickets.length) {
+      html += `<div class="fiche-section">🔧 Signalements</div>
+        <table><thead><tr><th>Date</th><th>Description</th><th>Statut</th></tr></thead><tbody>` +
+        d.tickets.map(t => `<tr><td>${t.date_creation ? new Date(t.date_creation).toLocaleDateString("fr-FR") : "—"}</td><td>${t.description}</td><td>${badge(t.statut)}</td></tr>`).join("") +
+        `</tbody></table>`;
+    }
+    document.getElementById("modal-body").innerHTML = html;
+  } catch (err) {
+    document.getElementById("modal-body").innerHTML = `<div class="empty-note">Erreur : ${err.message}</div>`;
+  }
+}
+
+// ---------- Photos des logements & bâtiments ----------
+let _photoContexte = { type: null, id: null };
+async function ouvrirPhotos(type, id, nom) {
+  _photoContexte = { type, id };
+  const param = type === "maison" ? `maison_id=${id}` : `batiment_id=${id}`;
+  ouvrirModal(`Photos — ${nom}`, `
+    <div style="margin-bottom:14px">
+      <input type="file" id="photo-file" accept="image/*" style="font-size:13px">
+      <input type="text" id="photo-legende" placeholder="Légende (optionnel)" style="margin-top:8px;font-size:13px">
+      <button class="gold" style="margin-top:8px" onclick="envoyerPhoto()">📤 Ajouter la photo</button>
+      <div id="photo-upload-status" class="muted" style="font-size:12px;margin-top:6px"></div>
+    </div>
+    <div id="photo-gallery" class="photo-gallery"><div class="empty-note">Chargement...</div></div>
+  `);
+  chargerPhotos();
+}
+
+async function chargerPhotos() {
+  const { type, id } = _photoContexte;
+  const param = type === "maison" ? `maison_id=${id}` : `batiment_id=${id}`;
+  try {
+    const photos = await apiFetch(`/photos?${param}`);
+    const gal = document.getElementById("photo-gallery");
+    if (!gal) return;
+    if (!photos.length) {
+      gal.innerHTML = `<div class="empty-note">Aucune photo pour le moment.</div>`;
+      return;
+    }
+    gal.innerHTML = photos.map(p => `
+      <div class="photo-thumb">
+        <img src="${API}/photos/${p.id}/fichier" alt="${p.legende || ""}" onclick="window.open('${API}/photos/${p.id}/fichier','_blank')" loading="lazy">
+        ${p.legende ? `<div class="photo-legende">${p.legende}</div>` : ""}
+        <button class="photo-del" title="Supprimer" onclick="supprimerPhoto(${p.id})">✕</button>
+      </div>`).join("");
+  } catch (err) {
+    document.getElementById("photo-gallery").innerHTML = `<div class="empty-note">Erreur : ${err.message}</div>`;
+  }
+}
+
+async function envoyerPhoto() {
+  const file = document.getElementById("photo-file").files[0];
+  const status = document.getElementById("photo-upload-status");
+  if (!file) { status.textContent = "Choisissez une image."; return; }
+  const fd = new FormData();
+  fd.append("fichier", file);
+  fd.append("legende", document.getElementById("photo-legende").value || "");
+  if (_photoContexte.type === "maison") fd.append("maison_id", _photoContexte.id);
+  else fd.append("batiment_id", _photoContexte.id);
+  status.textContent = "Envoi en cours...";
+  try {
+    const res = await fetch(`${API}/photos`, { method: "POST", headers: authHeaders(), body: fd });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      throw new Error(e.detail || "Envoi impossible");
+    }
+    status.textContent = "✅ Photo ajoutée";
+    document.getElementById("photo-file").value = "";
+    document.getElementById("photo-legende").value = "";
+    chargerPhotos();
+  } catch (err) {
+    status.textContent = "❌ " + err.message;
+  }
+}
+
+async function supprimerPhoto(pid) {
+  if (!confirm("Supprimer cette photo ?")) return;
+  try {
+    await apiFetch(`/photos/${pid}`, { method: "DELETE" });
+    chargerPhotos();
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
 function renderLocataires() {
   const actifs = CACHE.locataires.filter(l => !l.archive);
   document.getElementById("locataires-list").innerHTML = actifs.map(l => `
     <tr>
       <td>${l.nom}</td><td>${l.telephone || "—"}</td><td>${l.piece_identite || "—"}</td><td>${l.contact_urgence || "—"}</td>
       <td class="actions-row gerant-only ${ME && ME.role !== 'gerant' ? 'hidden' : ''}">
+        <button class="secondary" onclick="ouvrirFicheLocataire(${l.id})">📋 Fiche</button>
         <button class="secondary" onclick="gererLienPortail(${l.id})">${l.portail_token ? "🔗 Lien portail" : "🔗 Créer lien"}</button>
         <button class="secondary" onclick='editLocataire(${JSON.stringify(l).replace(/'/g, "&apos;")})'>Modifier</button>
         <button class="danger" onclick="deleteItem('locataires', ${l.id})">Suppr.</button>

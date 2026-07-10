@@ -203,6 +203,21 @@ class PieceJustificative(Base):
     maison = relationship("Maison")
 
 
+class Photo(Base):
+    """Photo d'un logement ou d'un bâtiment. Stockée en base (le disque Render est éphémère)."""
+    __tablename__ = "photos"
+    id = Column(Integer, primary_key=True, index=True)
+    maison_id = Column(Integer, ForeignKey("maisons.id"), nullable=True)
+    batiment_id = Column(Integer, ForeignKey("batiments.id"), nullable=True)
+    legende = Column(String, nullable=True)
+    nom_fichier = Column(String, nullable=False)
+    type_mime = Column(String, nullable=False)
+    taille = Column(Integer, default=0)
+    contenu = Column(LargeBinary, nullable=False)
+    date_upload = Column(DateTime, default=datetime.utcnow)
+    uploaded_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+
 class Observation(Base):
     __tablename__ = "observations"
     id = Column(Integer, primary_key=True, index=True)
@@ -266,6 +281,7 @@ try:
     _add_column_if_missing("locataires", "portail_token", "VARCHAR")
     _add_column_if_missing("maisons", "batiment_id", "INTEGER")
     _add_column_if_missing("maisons", "nom_logement", "VARCHAR")
+    # La table photos est créée par create_all ; rien à migrer de plus.
 except Exception:
     pass
 
@@ -531,6 +547,18 @@ class PieceOut(BaseModel):
     taille: int
     date_upload: datetime
     uploaded_by: Optional[int] = None
+
+
+class PhotoOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    maison_id: Optional[int] = None
+    batiment_id: Optional[int] = None
+    legende: Optional[str] = None
+    nom_fichier: str
+    type_mime: str
+    taille: int
+    date_upload: datetime
 
 
 class ObservationIn(BaseModel):
@@ -1682,6 +1710,162 @@ def delete_piece(piece_id: int, db: Session = Depends(get_db), _: User = Depends
     db.delete(piece)
     db.commit()
     return {"ok": True}
+
+
+# ---------- Photos des logements & bâtiments ----------
+PHOTO_TYPES_AUTORISES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif"}
+
+
+@app.get("/api/photos", response_model=List[PhotoOut])
+def list_photos(maison_id: Optional[int] = None, batiment_id: Optional[int] = None,
+                db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    q = db.query(Photo)
+    if maison_id is not None:
+        q = q.filter(Photo.maison_id == maison_id)
+    if batiment_id is not None:
+        q = q.filter(Photo.batiment_id == batiment_id)
+    # Un propriétaire ne voit que les photos de son périmètre
+    if current_user.role == "proprietaire":
+        mes_maisons = set(owned_maison_ids(db, current_user))
+        mes_batiments = {b.id for b in db.query(Batiment.id).filter(Batiment.proprietaire_id == current_user.id).all()}
+        photos = [p for p in q.order_by(Photo.date_upload.desc()).all()
+                  if (p.maison_id in mes_maisons) or (p.batiment_id in mes_batiments)]
+        return photos
+    return q.order_by(Photo.date_upload.desc()).all()
+
+
+@app.post("/api/photos", response_model=PhotoOut)
+async def upload_photo(
+    maison_id: Optional[str] = Form(None),
+    batiment_id: Optional[str] = Form(None),
+    legende: Optional[str] = Form(None),
+    fichier: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current: User = Depends(require_gerant),
+):
+    type_mime = (fichier.content_type or "").lower()
+    if type_mime not in PHOTO_TYPES_AUTORISES:
+        raise HTTPException(400, "Format non autorisé (image JPG, PNG, WEBP ou GIF)")
+    contenu = await fichier.read()
+    if len(contenu) > PIECE_MAX_TAILLE:
+        raise HTTPException(400, "Image trop volumineuse (maximum 10 Mo)")
+    if not contenu:
+        raise HTTPException(400, "Fichier vide")
+
+    m_id = None
+    b_id = None
+    if maison_id not in (None, "", "null"):
+        m_id = int(maison_id)
+        if not db.query(Maison).get(m_id):
+            raise HTTPException(404, "Logement introuvable")
+    if batiment_id not in (None, "", "null"):
+        b_id = int(batiment_id)
+        if not db.query(Batiment).get(b_id):
+            raise HTTPException(404, "Bâtiment introuvable")
+    if not m_id and not b_id:
+        raise HTTPException(400, "Précisez un logement ou un bâtiment")
+
+    photo = Photo(
+        maison_id=m_id,
+        batiment_id=b_id,
+        legende=(legende or "").strip() or None,
+        nom_fichier=fichier.filename or f"photo{PHOTO_TYPES_AUTORISES[type_mime]}",
+        type_mime=type_mime,
+        taille=len(contenu),
+        contenu=contenu,
+        uploaded_by=current.id,
+    )
+    db.add(photo)
+    db.commit()
+    db.refresh(photo)
+    journaliser(db, current, "creation", "photo", f"Photo ajoutée ({photo.legende or photo.nom_fichier})")
+    return photo
+
+
+@app.get("/api/photos/{photo_id}/fichier")
+def voir_photo(photo_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    photo = db.query(Photo).get(photo_id)
+    if not photo:
+        raise HTTPException(404, "Photo introuvable")
+    if current_user.role == "proprietaire":
+        mes_maisons = set(owned_maison_ids(db, current_user))
+        mes_batiments = {b.id for b in db.query(Batiment.id).filter(Batiment.proprietaire_id == current_user.id).all()}
+        if photo.maison_id not in mes_maisons and photo.batiment_id not in mes_batiments:
+            raise HTTPException(403, "Accès refusé")
+    nom_ascii = "".join(c if c.isascii() and c not in '"\\' else "_" for c in photo.nom_fichier)
+    return Response(
+        content=photo.contenu,
+        media_type=photo.type_mime,
+        headers={"Content-Disposition": f'inline; filename="{nom_ascii}"'},
+    )
+
+
+@app.delete("/api/photos/{photo_id}")
+def delete_photo(photo_id: int, db: Session = Depends(get_db), current: User = Depends(require_gerant)):
+    photo = db.query(Photo).get(photo_id)
+    if not photo:
+        raise HTTPException(404, "Photo introuvable")
+    db.delete(photo)
+    db.commit()
+    journaliser(db, current, "suppression", "photo", f"Photo #{photo_id} supprimée")
+    return {"ok": True}
+
+
+@app.get("/api/locataires/{locataire_id}/fiche")
+def fiche_locataire(locataire_id: int, db: Session = Depends(get_db), _: User = Depends(require_gerant)):
+    """Fiche complète d'un locataire : ses baux, tous ses paiements, ses signalements."""
+    loc = db.query(Locataire).get(locataire_id)
+    if not loc:
+        raise HTTPException(404, "Locataire introuvable")
+
+    baux = db.query(Bail).filter(Bail.locataire_id == locataire_id).order_by(Bail.date_debut.desc()).all()
+    baux_data = []
+    total_paye = 0.0
+    for b in baux:
+        maison = db.query(Maison).get(b.maison_id)
+        paiements = db.query(Paiement).filter(Paiement.bail_id == b.id).order_by(Paiement.mois_concerne.desc()).all()
+        p_data = []
+        for p in paiements:
+            if p.statut == "paye":
+                total_paye += p.montant
+            p_data.append({
+                "id": p.id, "mois_concerne": p.mois_concerne, "montant": p.montant,
+                "statut": p.statut, "date_paiement": p.date_paiement.isoformat() if p.date_paiement else None,
+                "mode": p.mode,
+            })
+        baux_data.append({
+            "bail_id": b.id,
+            "logement": libelle_logement(maison, db) if maison else "—",
+            "statut": b.statut,
+            "date_debut": b.date_debut.isoformat() if b.date_debut else None,
+            "date_fin": b.date_fin.isoformat() if b.date_fin else None,
+            "loyer_mensuel": b.loyer_mensuel,
+            "caution": b.caution,
+            "paiements": p_data,
+        })
+
+    tickets = db.query(Ticket).filter(Ticket.locataire_id == locataire_id).order_by(Ticket.date_creation.desc()).all()
+    tickets_data = [{
+        "id": t.id, "description": t.description, "statut": t.statut,
+        "date_creation": t.date_creation.isoformat() if t.date_creation else None,
+        "cout": t.cout,
+    } for t in tickets]
+
+    return {
+        "locataire": {
+            "id": loc.id, "nom": loc.nom, "telephone": loc.telephone,
+            "piece_identite": loc.piece_identite, "contact_urgence": loc.contact_urgence,
+            "archive": loc.archive,
+        },
+        "baux": baux_data,
+        "tickets": tickets_data,
+        "resume": {
+            "nb_baux": len(baux),
+            "nb_baux_actifs": sum(1 for b in baux if b.statut == "actif"),
+            "total_paye": round(total_paye, 2),
+            "nb_signalements": len(tickets),
+        },
+    }
 
 
 # ---------- Observations (messages propriétaire -> gérant) ----------
