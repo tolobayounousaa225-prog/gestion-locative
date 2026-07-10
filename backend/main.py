@@ -1084,7 +1084,133 @@ def create_paiement(data: PaiementIn, db: Session = Depends(get_db), current: Us
     return paiement
 
 
-# ---------- Génération PDF — quittance professionnelle ----------
+# ---------- Gain de temps : encaissement en masse & quittances groupées ----------
+class EncaissementMasseIn(BaseModel):
+    mois_concerne: str
+    bail_ids: List[int]
+    mode: str = "especes"
+    date_paiement: Optional[date] = None
+
+
+@app.get("/api/paiements/etat-mois")
+def etat_paiements_mois(mois: str = None, db: Session = Depends(get_db), _: User = Depends(require_gerant)):
+    """Liste tous les baux actifs avec leur état de paiement pour le mois (pour l'encaissement en masse)."""
+    if not mois:
+        mois = date.today().strftime("%Y-%m")
+    baux = db.query(Bail).filter(Bail.statut == "actif").all()
+    paiements = db.query(Paiement).filter(Paiement.mois_concerne == mois).all()
+    paye_par_bail = {}
+    for p in paiements:
+        if p.statut == "paye":
+            paye_par_bail[p.bail_id] = paye_par_bail.get(p.bail_id, 0) + p.montant
+    lignes = []
+    for b in baux:
+        maison = db.query(Maison).get(b.maison_id)
+        locataire = db.query(Locataire).get(b.locataire_id)
+        deja_paye = paye_par_bail.get(b.id, 0)
+        lignes.append({
+            "bail_id": b.id,
+            "maison": libelle_logement(maison, db) if maison else "—",
+            "locataire": locataire.nom if locataire else "—",
+            "loyer_mensuel": b.loyer_mensuel,
+            "deja_paye": deja_paye,
+            "solde": deja_paye >= b.loyer_mensuel,
+        })
+    ordre = lambda x: (x["solde"], x["maison"])
+    lignes.sort(key=ordre)
+    return {"mois": mois, "lignes": lignes}
+
+
+@app.post("/api/paiements/encaisser-masse")
+def encaisser_masse(data: EncaissementMasseIn, db: Session = Depends(get_db), current: User = Depends(require_gerant)):
+    """Enregistre en une fois le paiement du loyer complet pour plusieurs baux (mois donné).
+    Ignore les baux déjà soldés pour ce mois."""
+    if not data.bail_ids:
+        raise HTTPException(400, "Aucun bail sélectionné")
+    date_p = data.date_paiement or date.today()
+    # Baux déjà soldés à exclure
+    paiements_existants = db.query(Paiement).filter(
+        Paiement.mois_concerne == data.mois_concerne,
+        Paiement.bail_id.in_(data.bail_ids),
+        Paiement.statut == "paye",
+    ).all()
+    paye_par_bail = {}
+    for p in paiements_existants:
+        paye_par_bail[p.bail_id] = paye_par_bail.get(p.bail_id, 0) + p.montant
+
+    crees = 0
+    total = 0.0
+    for bail_id in data.bail_ids:
+        bail = db.query(Bail).get(bail_id)
+        if not bail or bail.statut != "actif":
+            continue
+        if paye_par_bail.get(bail_id, 0) >= bail.loyer_mensuel:
+            continue  # déjà soldé
+        reste = bail.loyer_mensuel - paye_par_bail.get(bail_id, 0)
+        paiement = Paiement(
+            bail_id=bail_id,
+            mois_concerne=data.mois_concerne,
+            montant=reste,
+            date_paiement=date_p,
+            mode=data.mode,
+            statut="paye",
+            verification_code=generate_verification_code(),
+        )
+        db.add(paiement)
+        crees += 1
+        total += reste
+    db.commit()
+    journaliser(db, current, "paiement", "encaissement_masse",
+                f"{crees} loyer(s) encaissé(s) pour {data.mois_concerne} — total {total:.0f} {DEVISE}")
+    return {"ok": True, "paiements_crees": crees, "total_encaisse": total, "mois": data.mois_concerne}
+
+
+@app.get("/api/paiements/quittances-mois")
+def quittances_mois(mois: str, request: Request, db: Session = Depends(get_db), current: User = Depends(require_gerant)):
+    """Génère un PDF unique regroupant toutes les quittances des paiements soldés du mois."""
+    from pypdf import PdfWriter, PdfReader
+    paiements = db.query(Paiement).filter(Paiement.mois_concerne == mois, Paiement.statut == "paye").all()
+    if not paiements:
+        raise HTTPException(404, "Aucune quittance à générer pour ce mois")
+
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+    host = request.headers.get("x-forwarded-host", request.headers.get("host", request.url.netloc))
+    base_url = f"{proto}://{host}"
+
+    writer = PdfWriter()
+    nb = 0
+    for p in paiements:
+        bail = db.query(Bail).get(p.bail_id)
+        if not bail:
+            continue
+        maison = db.query(Maison).get(bail.maison_id)
+        locataire = db.query(Locataire).get(bail.locataire_id)
+        if not p.verification_code:
+            p.verification_code = generate_verification_code()
+            db.commit()
+            db.refresh(p)
+        verify_url = f"{base_url}/verifier.html?code={p.verification_code}"
+        buf = generer_quittance_pdf(p, bail, maison, locataire, verify_url)
+        reader = PdfReader(buf)
+        for page in reader.pages:
+            writer.add_page(page)
+        nb += 1
+
+    if nb == 0:
+        raise HTTPException(404, "Aucune quittance générée")
+
+    out = io.BytesIO()
+    writer.write(out)
+    out.seek(0)
+    journaliser(db, current, "sauvegarde", "quittances_mois", f"{nb} quittance(s) générée(s) pour {mois}")
+    return StreamingResponse(
+        out,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="quittances_{mois}.pdf"'},
+    )
+
+
+
 FRENCH_UNITS = ["", "un", "deux", "trois", "quatre", "cinq", "six", "sept", "huit", "neuf", "dix",
                 "onze", "douze", "treize", "quatorze", "quinze", "seize", "dix-sept", "dix-huit", "dix-neuf"]
 FRENCH_TENS = ["", "", "vingt", "trente", "quarante", "cinquante", "soixante", "soixante-dix", "quatre-vingt", "quatre-vingt-dix"]

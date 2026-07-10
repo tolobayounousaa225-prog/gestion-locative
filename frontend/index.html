@@ -240,6 +240,8 @@
   body.dark .alerte.info    { background: #16212e; border-color: #274056; }
   .alerte-ok { padding: 12px 15px; border-radius: 11px; background: #f0fdf4; border: 1px solid #bbf7d0; font-size: 13px; color: #15803d; }
   body.dark .alerte-ok { background: #14251a; border-color: #235c34; color: #6ee7a0; }
+  tr.masse-solde { opacity: .55; }
+  tr.masse-solde td { background: rgba(22,163,74,.05); }
 
   .panel { background: var(--card); border-radius: 12px; padding: 20px; box-shadow: 0 1px 4px rgba(18,49,79,.08); margin-bottom: 20px; }
   .panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
@@ -564,6 +566,29 @@
           </div>
           <div style="align-self:end"><button type="submit">Enregistrer</button></div>
         </form>
+      </div>
+
+      <!-- Encaissement en masse -->
+      <div class="panel gerant-only">
+        <div class="panel-header"><strong>⚡ Encaissement en masse</strong></div>
+        <p class="muted" style="margin:0 0 12px">Cochez les loyers reçus ce mois et enregistrez-les tous d'un coup. Les logements déjà soldés sont grisés.</p>
+        <div class="bilan-toolbar">
+          <div><label>Mois</label><input type="month" id="masse-mois"></div>
+          <div><button type="button" onclick="chargerEtatMois()">Afficher</button></div>
+          <div style="align-self:end"><button type="button" class="secondary" onclick="genererQuittancesMois()">📄 Quittances du mois (PDF)</button></div>
+        </div>
+        <div id="masse-loading" class="empty-note"></div>
+        <table id="masse-table" class="hidden">
+          <thead><tr>
+            <th style="width:36px"><input type="checkbox" id="masse-check-all" onchange="toggleAllMasse(this)"></th>
+            <th>Logement</th><th>Locataire</th><th>Loyer</th><th>État</th>
+          </tr></thead>
+          <tbody id="masse-list"></tbody>
+        </table>
+        <div id="masse-actions" class="hidden" style="margin-top:14px; display:flex; gap:10px; align-items:center;">
+          <button type="button" class="gold" onclick="encaisserMasse()">✅ Encaisser la sélection</button>
+          <span class="muted" id="masse-count">0 sélectionné(s)</span>
+        </div>
       </div>
       <div class="panel">
         <div class="panel-header"><strong>Historique des paiements</strong></div>
@@ -997,6 +1022,7 @@ function showView(name) {
   if (name === "relances") initRelances();
   if (name === "recherche") setTimeout(() => document.getElementById("recherche-input")?.focus(), 50);
   if (name === "systeme") chargerJournal();
+  if (name === "paiements") initMasse();
 }
 
 // ---------- Data loading ----------
@@ -1469,6 +1495,98 @@ async function resilierBail(id) {
 }
 
 // ---------- Paiements ----------
+// ---------- Encaissement en masse & quittances groupées ----------
+function initMasse() {
+  const input = document.getElementById("masse-mois");
+  if (input && !input.value) {
+    const d = new Date();
+    input.value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  }
+}
+
+async function chargerEtatMois() {
+  const mois = document.getElementById("masse-mois").value;
+  if (!mois) { alert("Choisissez un mois."); return; }
+  const loading = document.getElementById("masse-loading");
+  const table = document.getElementById("masse-table");
+  const actions = document.getElementById("masse-actions");
+  loading.textContent = "Chargement...";
+  table.classList.add("hidden");
+  actions.classList.add("hidden");
+  try {
+    const d = await apiFetch(`/paiements/etat-mois?mois=${mois}`);
+    loading.textContent = "";
+    if (!d.lignes.length) {
+      loading.textContent = "Aucun bail actif.";
+      return;
+    }
+    document.getElementById("masse-list").innerHTML = d.lignes.map(l => `
+      <tr class="${l.solde ? "masse-solde" : ""}">
+        <td>${l.solde ? "✔️" : `<input type="checkbox" class="masse-cb" value="${l.bail_id}" onchange="majMasseCount()">`}</td>
+        <td>${l.maison}</td>
+        <td>${l.locataire}</td>
+        <td>${fmtFCFA(l.loyer_mensuel)}</td>
+        <td>${l.solde ? '<span style="color:#16a34a">Soldé</span>' : '<span style="color:#c0392b">À encaisser</span>'}</td>
+      </tr>`).join("");
+    table.classList.remove("hidden");
+    actions.classList.remove("hidden");
+    majMasseCount();
+  } catch (err) {
+    loading.textContent = "Erreur : " + err.message;
+  }
+}
+
+function toggleAllMasse(cb) {
+  document.querySelectorAll(".masse-cb").forEach(x => { x.checked = cb.checked; });
+  majMasseCount();
+}
+
+function majMasseCount() {
+  const n = document.querySelectorAll(".masse-cb:checked").length;
+  document.getElementById("masse-count").textContent = `${n} sélectionné(s)`;
+}
+
+async function encaisserMasse() {
+  const mois = document.getElementById("masse-mois").value;
+  const ids = [...document.querySelectorAll(".masse-cb:checked")].map(x => Number(x.value));
+  if (!ids.length) { alert("Cochez au moins un loyer à encaisser."); return; }
+  if (!confirm(`Encaisser le loyer complet de ${ids.length} logement(s) pour ${mois} ?`)) return;
+  try {
+    const r = await apiFetch("/paiements/encaisser-masse", {
+      method: "POST",
+      body: JSON.stringify({ mois_concerne: mois, bail_ids: ids }),
+    });
+    alert(`✅ ${r.paiements_crees} loyer(s) encaissé(s) — total ${fmtFCFA(r.total_encaisse)}`);
+    await refreshAll();
+    chargerEtatMois();
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
+async function genererQuittancesMois() {
+  const mois = document.getElementById("masse-mois").value;
+  if (!mois) { alert("Choisissez un mois."); return; }
+  try {
+    const res = await fetch(`${API}/paiements/quittances-mois?mois=${mois}`, { headers: authHeaders() });
+    if (!res.ok) {
+      if (res.status === 404) { alert("Aucune quittance à générer pour ce mois (aucun paiement soldé)."); return; }
+      throw new Error("Génération impossible");
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `quittances_${mois}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 8000);
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
 document.getElementById("form-paiement").addEventListener("submit", async (e) => {
   e.preventDefault();
   const f = new FormData(e.target);
