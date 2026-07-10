@@ -2061,6 +2061,118 @@ def finances_export(annee: int = None, type: str = "paiements", db: Session = De
     )
 
 
+@app.get("/api/finances/rentabilite-batiments")
+def finances_rentabilite_batiments(annee: int = None, db: Session = Depends(get_db), _: User = Depends(require_gerant)):
+    """Rentabilité consolidée par bâtiment sur une année (somme de tous ses logements)."""
+    if annee is None:
+        annee = date.today().year
+    debut, fin = _periode_mois(annee)
+    mois_annee = [f"{annee}-{m:02d}" for m in range(1, 13)]
+
+    batiments = db.query(Batiment).all()
+    lignes = []
+    for bat in batiments:
+        logements = db.query(Maison).filter(Maison.batiment_id == bat.id).all()
+        maison_ids = [m.id for m in logements]
+        nb_occupes = sum(1 for m in logements if m.statut == "occupee")
+        encaisse = 0.0
+        charges = 0.0
+        if maison_ids:
+            bail_ids = {b.id for b in db.query(Bail.id).filter(Bail.maison_id.in_(maison_ids)).all()}
+            if bail_ids:
+                paiements = db.query(Paiement).filter(
+                    Paiement.mois_concerne.in_(mois_annee),
+                    Paiement.statut == "paye",
+                    Paiement.bail_id.in_(bail_ids),
+                ).all()
+                encaisse = sum(p.montant for p in paiements)
+            depenses = db.query(Depense).filter(
+                Depense.maison_id.in_(maison_ids),
+                Depense.date_depense >= debut,
+                Depense.date_depense <= fin,
+            ).all()
+            tickets = db.query(Ticket).filter(
+                Ticket.maison_id.in_(maison_ids),
+                Ticket.date_creation >= datetime.combine(debut, datetime.min.time()),
+                Ticket.date_creation <= datetime.combine(fin, datetime.max.time()),
+            ).all()
+            charges = sum(d.montant for d in depenses) + sum(t.cout for t in tickets)
+        net = encaisse - charges
+        lignes.append({
+            "batiment_id": bat.id,
+            "nom": bat.nom,
+            "proprietaire": bat.proprietaire,
+            "nb_logements": len(logements),
+            "nb_occupes": nb_occupes,
+            "taux_occupation": round(nb_occupes / len(logements) * 100, 1) if logements else 0,
+            "encaisse": round(encaisse, 2),
+            "charges": round(charges, 2),
+            "resultat_net": round(net, 2),
+            "rendement_pct": round(net / encaisse * 100, 1) if encaisse else None,
+        })
+    lignes.sort(key=lambda x: x["resultat_net"], reverse=True)
+    return {
+        "annee": annee,
+        "lignes": lignes,
+        "total_encaisse": round(sum(l["encaisse"] for l in lignes), 2),
+        "total_charges": round(sum(l["charges"] for l in lignes), 2),
+        "resultat_net_global": round(sum(l["resultat_net"] for l in lignes), 2),
+    }
+
+
+@app.get("/api/finances/previsionnel")
+def finances_previsionnel(mois: int = 6, db: Session = Depends(get_db), _: User = Depends(require_gerant)):
+    """Prévisionnel de trésorerie : projette les loyers attendus des baux actifs sur les prochains mois,
+    en tenant compte des dates de fin de bail. Compare au réalisé du mois en cours."""
+    n = max(1, min(mois, 12))
+    aujourd_hui = date.today()
+    baux_actifs = db.query(Bail).filter(Bail.statut == "actif").all()
+
+    # Générer les n prochains mois (à partir du mois courant)
+    projection = []
+    an, m = aujourd_hui.year, aujourd_hui.month
+    for i in range(n):
+        mois_str = f"{an}-{m:02d}"
+        # Dernier jour du mois pour vérifier si le bail court encore
+        dernier_jour = date(an, m, calendar.monthrange(an, m)[1])
+        attendu = 0.0
+        nb_baux = 0
+        for b in baux_actifs:
+            # Le bail contribue si sa date de fin est nulle ou postérieure au début du mois
+            debut_mois = date(an, m, 1)
+            if b.date_fin and b.date_fin < debut_mois:
+                continue
+            if b.date_debut and b.date_debut > dernier_jour:
+                continue
+            attendu += b.loyer_mensuel
+            nb_baux += 1
+        # Réalisé (uniquement pour le mois courant et les mois passés)
+        realise = None
+        if mois_str <= aujourd_hui.strftime("%Y-%m"):
+            paiements = db.query(Paiement).filter(
+                Paiement.mois_concerne == mois_str, Paiement.statut == "paye",
+            ).all()
+            realise = round(sum(p.montant for p in paiements), 2)
+        projection.append({
+            "mois": mois_str,
+            "attendu": round(attendu, 2),
+            "nb_baux": nb_baux,
+            "realise": realise,
+        })
+        m += 1
+        if m > 12:
+            m = 1
+            an += 1
+
+    total_attendu = sum(p["attendu"] for p in projection)
+    return {
+        "mois_projetes": n,
+        "projection": projection,
+        "total_attendu": round(total_attendu, 2),
+        "moyenne_mensuelle": round(total_attendu / n, 2) if n else 0,
+    }
+
+
 # ---------- Automatisation : impayés, échéancier, contrats ----------
 def _telephone_wa(tel: Optional[str]) -> Optional[str]:
     """Nettoie un numéro pour un lien wa.me (Côte d'Ivoire : préfixe 225 par défaut)."""

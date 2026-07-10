@@ -788,6 +788,34 @@
           <tbody id="finances-rentabilite-list"></tbody>
         </table>
       </div>
+
+      <div class="panel">
+        <div class="panel-header"><strong>🏢 Rentabilité par bâtiment</strong></div>
+        <table>
+          <thead><tr><th>Bâtiment</th><th>Occupation</th><th>Encaissé</th><th>Charges</th><th>Résultat net</th><th>Marge</th></tr></thead>
+          <tbody id="finances-rentabilite-batiments"></tbody>
+        </table>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header"><strong>🔮 Prévisionnel de trésorerie</strong></div>
+        <p class="muted" style="margin:0 0 12px">Projection des loyers attendus des baux actifs sur les prochains mois (selon les dates de fin de bail).</p>
+        <div class="bilan-toolbar">
+          <div><label>Horizon</label>
+            <select id="previ-mois" onchange="chargerPrevisionnel()">
+              <option value="3">3 mois</option>
+              <option value="6" selected>6 mois</option>
+              <option value="12">12 mois</option>
+            </select>
+          </div>
+        </div>
+        <div class="stat-cards" id="previ-cards" style="margin-top:6px"></div>
+        <div style="padding:12px"><canvas id="chart-previsionnel" height="110"></canvas></div>
+        <table>
+          <thead><tr><th>Mois</th><th>Loyers attendus</th><th>Baux actifs</th><th>Réalisé</th></tr></thead>
+          <tbody id="previ-list"></tbody>
+        </table>
+      </div>
     </section>
 
     <!-- RELANCES & ECHEANCIER -->
@@ -2131,16 +2159,83 @@ async function chargerFinances() {
   const loading = document.getElementById("finances-loading");
   loading.textContent = "Chargement des données financières...";
   try {
-    const [rentabilite, evolution] = await Promise.all([
+    const [rentabilite, evolution, rentBat] = await Promise.all([
       apiFetch(`/finances/rentabilite?annee=${annee}`),
       apiFetch(`/finances/evolution?mois=${nbmois}`),
+      apiFetch(`/finances/rentabilite-batiments?annee=${annee}`),
     ]);
     loading.textContent = "";
     renderFinancesCards(rentabilite);
     renderRentabilite(rentabilite);
     renderEvolutionChart(evolution.evolution);
+    renderRentabiliteBatiments(rentBat);
+    chargerPrevisionnel();
   } catch (err) {
     loading.textContent = "Erreur : " + err.message;
+  }
+}
+
+function renderRentabiliteBatiments(r) {
+  const tbody = document.getElementById("finances-rentabilite-batiments");
+  if (!tbody) return;
+  tbody.innerHTML = r.lignes.map(l => {
+    const net = l.resultat_net;
+    const couleur = net > 0 ? "#0a7d3c" : (net < 0 ? "#c0392b" : "var(--muted)");
+    const marge = l.rendement_pct != null ? l.rendement_pct + " %" : "—";
+    return `<tr>
+      <td><strong>${l.nom}</strong></td>
+      <td>${l.nb_occupes}/${l.nb_logements} (${l.taux_occupation}%)</td>
+      <td>${fmtFCFA(l.encaisse)}</td>
+      <td>${fmtFCFA(l.charges)}</td>
+      <td style="color:${couleur};font-weight:600">${fmtFCFA(net)}</td>
+      <td>${marge}</td>
+    </tr>`;
+  }).join("") || `<tr><td colspan="6" class="empty-note">Aucun bâtiment</td></tr>`;
+}
+
+let _chartPrevi = null;
+async function chargerPrevisionnel() {
+  const n = document.getElementById("previ-mois").value || 6;
+  try {
+    const d = await apiFetch(`/finances/previsionnel?mois=${n}`);
+    document.getElementById("previ-cards").innerHTML = `
+      <div class="stat-card sc-gold">
+        <div class="sc-ico">🔮</div>
+        <div class="sc-val">${fmtFCFA(d.total_attendu)}</div>
+        <div class="sc-lbl">Total attendu (${d.mois_projetes} mois)</div>
+      </div>
+      <div class="stat-card sc-blue">
+        <div class="sc-ico">📅</div>
+        <div class="sc-val">${fmtFCFA(d.moyenne_mensuelle)}</div>
+        <div class="sc-lbl">Moyenne mensuelle projetée</div>
+      </div>`;
+    document.getElementById("previ-list").innerHTML = d.projection.map(p => `
+      <tr>
+        <td>${p.mois}</td>
+        <td>${fmtFCFA(p.attendu)}</td>
+        <td>${p.nb_baux}</td>
+        <td>${p.realise != null ? fmtFCFA(p.realise) : '<span class="muted">à venir</span>'}</td>
+      </tr>`).join("");
+
+    const ctx = document.getElementById("chart-previsionnel");
+    if (_chartPrevi) _chartPrevi.destroy();
+    _chartPrevi = new Chart(ctx, {
+      type: "bar",
+      data: {
+        labels: d.projection.map(p => p.mois),
+        datasets: [
+          { label: "Attendu", data: d.projection.map(p => p.attendu), backgroundColor: "rgba(201,162,39,.55)", borderRadius: 5 },
+          { label: "Réalisé", data: d.projection.map(p => p.realise || 0), backgroundColor: "rgba(16,124,60,.7)", borderRadius: 5 },
+        ],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { position: "bottom" } },
+        scales: { y: { ticks: { callback: v => (v / 1000) + "k" } } },
+      },
+    });
+  } catch (err) {
+    document.getElementById("previ-list").innerHTML = `<tr><td colspan="4" class="empty-note">Erreur : ${err.message}</td></tr>`;
   }
 }
 
