@@ -48,12 +48,13 @@
 
   /* ---------- LOGIN ---------- */
   #login-screen {
-    display: flex; align-items: center; justify-content: center; min-height: 100vh;
+    display: none; align-items: center; justify-content: center; min-height: 100vh;
     background:
       linear-gradient(160deg, rgba(11,31,53,.93), rgba(18,49,79,.88)),
       repeating-linear-gradient(45deg, rgba(255,255,255,.03) 0 2px, transparent 2px 40px);
     position: relative; overflow: hidden;
   }
+  #login-screen.visible { display: flex; }
   #login-screen::before {
     content: "";
     position: absolute; inset: 0;
@@ -356,6 +357,12 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 </head>
 <body>
+
+<!-- Écran neutre affiché le temps que le script décide login vs app (évite le clignotement) -->
+<div id="boot-screen" style="position:fixed;inset:0;background:#0B1F35;z-index:9999;display:flex;align-items:center;justify-content:center;">
+  <div style="width:38px;height:38px;border-radius:50%;border:3px solid rgba(201,162,39,.2);border-top-color:#C9A227;animation:boot-spin .7s linear infinite;"></div>
+</div>
+<style>@keyframes boot-spin{to{transform:rotate(360deg);}}</style>
 
 <!-- ================= LOGIN ================= -->
 <div id="login-screen">
@@ -1073,6 +1080,9 @@ function logout() {
   app.style.display = "none";
   app.classList.remove("shell", "nav-open");
   document.getElementById("login-screen").style.display = "flex";
+  document.getElementById("login-screen").classList.add("visible");
+  const boot = document.getElementById("boot-screen");
+  if (boot) boot.remove();
 }
 
 async function showApp() {
@@ -1081,6 +1091,8 @@ async function showApp() {
   const app = document.getElementById("app");
   app.style.display = "flex";
   app.classList.add("shell");
+  const boot = document.getElementById("boot-screen");
+  if (boot) boot.remove();
 
   document.getElementById("user-nom").textContent = ME.nom;
   const roleTag = document.getElementById("user-role");
@@ -2690,7 +2702,14 @@ async function deleteItem(resource, id) {
 }
 
 // ---------- Démarrage ----------
-if (TOKEN) { showApp().catch(() => logout()); }
+if (TOKEN) {
+  showApp().catch(() => logout());
+} else {
+  // Pas de session : afficher l'écran de connexion et retirer l'écran de chargement
+  document.getElementById("login-screen").classList.add("visible");
+  const boot = document.getElementById("boot-screen");
+  if (boot) boot.remove();
+}
 </script>
 </body>
 </html>
