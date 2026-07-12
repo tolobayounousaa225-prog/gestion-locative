@@ -535,8 +535,8 @@
           <input type="hidden" name="edit_id" id="maison-edit-id">
           <div><label>Bâtiment</label><select name="batiment_id" id="maison-batiment-select" required><option value="">— Choisir un bâtiment —</option></select></div>
           <div><label>Nom du logement</label><input name="nom_logement" placeholder="Ex : Appartement 3, Porte A"></div>
-          <div><label>Nb pièces</label><input name="nb_pieces" type="number" value="1"></div>
-          <div><label>Loyer de référence</label><input name="loyer_reference" type="number" step="0.01" value="0"></div>
+          <div><label>Nb pièces</label><input name="nb_pieces" type="number" min="1" value="1"></div>
+          <div><label>Loyer de référence</label><input name="loyer_reference" type="number" step="0.01" min="0" value="0"></div>
           <div><label>Statut</label>
             <select name="statut"><option value="libre">Libre</option><option value="occupee">Occupée</option><option value="travaux">En travaux</option></select>
           </div>
@@ -589,8 +589,8 @@
           <div><label>Locataire</label><select name="locataire_id" id="bail-locataire-select" required></select></div>
           <div><label>Date de début</label><input name="date_debut" type="date" required></div>
           <div><label>Date de fin (optionnel)</label><input name="date_fin" type="date"></div>
-          <div><label>Loyer mensuel</label><input name="loyer_mensuel" type="number" step="0.01" required></div>
-          <div><label>Caution</label><input name="caution" type="number" step="0.01" value="0"></div>
+          <div><label>Loyer mensuel</label><input name="loyer_mensuel" type="number" step="0.01" min="0.01" required></div>
+          <div><label>Caution</label><input name="caution" type="number" step="0.01" min="0" value="0"></div>
           <div style="align-self:end"><button type="submit">Créer le bail</button></div>
         </form>
       </div>
@@ -610,7 +610,7 @@
         <form id="form-paiement" class="form-grid">
           <div><label>Bail</label><select name="bail_id" id="paiement-bail-select" required></select></div>
           <div><label>Mois concerné (AAAA-MM)</label><input name="mois_concerne" placeholder="2026-07" required></div>
-          <div><label>Montant</label><input name="montant" type="number" step="0.01" required></div>
+          <div><label>Montant</label><input name="montant" type="number" step="0.01" min="0.01" required></div>
           <div><label>Date de paiement</label><input name="date_paiement" type="date"></div>
           <div><label>Mode</label>
             <select name="mode"><option value="especes">Espèces</option><option value="mobile_money">Mobile money</option><option value="virement">Virement</option></select>
@@ -663,7 +663,7 @@
           <div><label>Maison</label><select name="maison_id" id="ticket-maison-select" required></select></div>
           <div><label>Locataire (optionnel)</label><select name="locataire_id" id="ticket-locataire-select"><option value="">—</option></select></div>
           <div style="grid-column:1/-1"><label>Description</label><textarea name="description" required></textarea></div>
-          <div><label>Coût estimé</label><input name="cout" type="number" step="0.01" value="0"></div>
+          <div><label>Coût estimé</label><input name="cout" type="number" step="0.01" min="0" value="0"></div>
           <div style="align-self:end"><button type="submit">Créer le ticket</button></div>
         </form>
       </div>
@@ -692,7 +692,7 @@
             </select>
           </div>
           <div><label>Libellé</label><input name="libelle" required></div>
-          <div><label>Montant</label><input name="montant" type="number" step="0.01" required></div>
+          <div><label>Montant</label><input name="montant" type="number" step="0.01" min="0.01" required></div>
           <div><label>Date</label><input name="date_depense" type="date" required></div>
           <div><label>Maison concernée (optionnel)</label><select name="maison_id" id="depense-maison-select"><option value="">— Générale (tout le parc) —</option></select></div>
           <div style="align-self:end"><button type="submit">Ajouter</button></div>
@@ -714,7 +714,7 @@
         <form id="form-piece" class="form-grid">
           <div><label>Titre</label><input name="titre" required placeholder="Ex : Facture ciment"></div>
           <div><label>Maison concernée</label><select name="maison_id" id="piece-maison-select"><option value="">— Document général (gérant seul) —</option></select></div>
-          <div><label>Montant (optionnel)</label><input name="montant" type="number" step="0.01" placeholder="Ex : 25000"></div>
+          <div><label>Montant (optionnel)</label><input name="montant" type="number" step="0.01" min="0" placeholder="Ex : 25000"></div>
           <div><label>Fichier (PDF ou image, max 10 Mo)</label><input name="fichier" type="file" accept="application/pdf,image/jpeg,image/png,image/webp,image/gif" required></div>
           <div style="grid-column:1/-1"><label>Description (optionnel)</label><input name="description" placeholder="Détail de l'achat ou des travaux..."></div>
           <div style="align-self:end"><button type="submit" id="piece-submit-btn">Téléverser</button></div>
@@ -957,6 +957,18 @@ const API = "/api";
 let TOKEN = localStorage.getItem("gl_token") || null;
 let ME = null;
 let CACHE = { maisons: [], locataires: [], baux: [], paiements: [], tickets: [], users: [], depenses: [], observations: [], batiments: [] };
+
+// Échappe le HTML dangereux dans un texte libre avant insertion via innerHTML
+// (protection contre l'injection de script — ex. via un message d'observation ou un nom saisi par un utilisateur)
+function esc(s) {
+  if (s === null || s === undefined) return "";
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
 
 // ---------- Auth ----------
 function authHeaders(extra = {}) {
@@ -1214,19 +1226,19 @@ function lancerRecherche() {
   if (maisons.length) {
     html += `<div class="panel"><div class="panel-header"><strong>🏠 Logements (${maisons.length})</strong></div>
       <table><thead><tr><th>Logement</th><th>Statut</th><th>Loyer réf.</th></tr></thead><tbody>` +
-      maisons.map(m => `<tr onclick="showView('maisons')" style="cursor:pointer"><td>${maisonAdresse(m.id)}</td><td>${badge(m.statut)}</td><td>${fmtFCFA(m.loyer_reference)}</td></tr>`).join("") +
+      maisons.map(m => `<tr onclick="showView('maisons')" style="cursor:pointer"><td>${esc(maisonAdresse(m.id))}</td><td>${badge(m.statut)}</td><td>${fmtFCFA(m.loyer_reference)}</td></tr>`).join("") +
       `</tbody></table></div>`;
   }
   if (locataires.length) {
     html += `<div class="panel"><div class="panel-header"><strong>👥 Locataires (${locataires.length})</strong></div>
       <table><thead><tr><th>Nom</th><th>Téléphone</th></tr></thead><tbody>` +
-      locataires.map(l => `<tr onclick="showView('locataires')" style="cursor:pointer"><td>${l.nom}</td><td>${l.telephone || "—"}</td></tr>`).join("") +
+      locataires.map(l => `<tr onclick="showView('locataires')" style="cursor:pointer"><td>${esc(l.nom)}</td><td>${esc(l.telephone) || "—"}</td></tr>`).join("") +
       `</tbody></table></div>`;
   }
   if (baux.length) {
     html += `<div class="panel"><div class="panel-header"><strong>📃 Baux (${baux.length})</strong></div>
       <table><thead><tr><th>Logement</th><th>Locataire</th><th>Loyer</th><th>Statut</th></tr></thead><tbody>` +
-      baux.map(b => `<tr onclick="showView('baux')" style="cursor:pointer"><td>${maisonAdresse(b.maison_id)}</td><td>${locataireNom(b.locataire_id)}</td><td>${fmtFCFA(b.loyer_mensuel)}</td><td>${badge(b.statut)}</td></tr>`).join("") +
+      baux.map(b => `<tr onclick="showView('baux')" style="cursor:pointer"><td>${esc(maisonAdresse(b.maison_id))}</td><td>${esc(locataireNom(b.locataire_id))}</td><td>${fmtFCFA(b.loyer_mensuel)}</td><td>${badge(b.statut)}</td></tr>`).join("") +
       `</tbody></table></div>`;
   }
   if (paiements.length) {
@@ -1237,7 +1249,7 @@ function lancerRecherche() {
   }
   box.innerHTML = html;
 }
-function proprietaireNom(id) { return CACHE.users.find(u => u.id === id)?.nom || ""; }
+function proprietaireNom(id) { return esc(CACHE.users.find(u => u.id === id)?.nom || ""); }
 
 // ---------- Dashboard ----------
 async function renderDashboard() {
@@ -1278,7 +1290,7 @@ async function renderDashboard() {
     </div>
   `;
   document.getElementById("dashboard-impayes").innerHTML = d.impayes.map(i => `
-    <tr><td>#${i.bail_id}</td><td>${maisonAdresse(i.maison_id)}</td><td>${fmtFCFA(i.loyer_mensuel)}</td></tr>
+    <tr><td>#${i.bail_id}</td><td>${esc(maisonAdresse(i.maison_id))}</td><td>${fmtFCFA(i.loyer_mensuel)}</td></tr>
   `).join("") || `<tr><td colspan="3" class="empty-note">Aucun impayé 🎉</td></tr>`;
 
   renderAlertes();
@@ -1445,14 +1457,14 @@ function annulerEditMaison() {
   document.getElementById("maison-cancel-btn").classList.add("hidden");
 }
 
-function batimentNom(id) { return (CACHE.batiments.find(b => b.id === id) || {}).nom || "—"; }
+function batimentNom(id) { return esc((CACHE.batiments.find(b => b.id === id) || {}).nom || "—"); }
 
 function renderMaisons() {
   document.getElementById("maisons-list").innerHTML = CACHE.maisons.map(m => `
     <tr>
       <td>${batimentNom(m.batiment_id)}</td>
-      <td>${m.nom_logement || "<span class='muted'>(sans nom)</span>"}</td>
-      <td>${m.proprietaire || proprietaireNom(m.proprietaire_id) || "—"}</td>
+      <td>${m.nom_logement ? esc(m.nom_logement) : "<span class='muted'>(sans nom)</span>"}</td>
+      <td>${esc(m.proprietaire) || proprietaireNom(m.proprietaire_id) || "—"}</td>
       <td>${m.nb_pieces}</td>
       <td>${m.loyer_reference}</td><td>${badge(m.statut)}</td>
       <td class="actions-row gerant-only ${ME && ME.role !== 'gerant' ? 'hidden' : ''}">
@@ -1550,7 +1562,7 @@ async function ouvrirFicheLocataire(id) {
     if (d.tickets.length) {
       html += `<div class="fiche-section">🔧 Signalements</div>
         <table><thead><tr><th>Date</th><th>Description</th><th>Statut</th></tr></thead><tbody>` +
-        d.tickets.map(t => `<tr><td>${t.date_creation ? new Date(t.date_creation).toLocaleDateString("fr-FR") : "—"}</td><td>${t.description}</td><td>${badge(t.statut)}</td></tr>`).join("") +
+        d.tickets.map(t => `<tr><td>${t.date_creation ? new Date(t.date_creation).toLocaleDateString("fr-FR") : "—"}</td><td>${esc(t.description)}</td><td>${badge(t.statut)}</td></tr>`).join("") +
         `</tbody></table>`;
     }
     document.getElementById("modal-body").innerHTML = html;
@@ -1637,7 +1649,7 @@ function renderLocataires() {
   const actifs = CACHE.locataires.filter(l => !l.archive);
   document.getElementById("locataires-list").innerHTML = actifs.map(l => `
     <tr>
-      <td>${l.nom}</td><td>${l.telephone || "—"}</td><td>${l.piece_identite || "—"}</td><td>${l.contact_urgence || "—"}</td>
+      <td>${esc(l.nom)}</td><td>${esc(l.telephone) || "—"}</td><td>${esc(l.piece_identite) || "—"}</td><td>${esc(l.contact_urgence) || "—"}</td>
       <td class="actions-row gerant-only ${ME && ME.role !== 'gerant' ? 'hidden' : ''}">
         <button class="secondary" onclick="ouvrirFicheLocataire(${l.id})">📋 Fiche</button>
         <button class="secondary" onclick="gererLienPortail(${l.id})">${l.portail_token ? "🔗 Lien portail" : "🔗 Créer lien"}</button>
@@ -1698,7 +1710,7 @@ function renderBaux() {
   const isGerant = ME && ME.role === "gerant";
   document.getElementById("baux-list").innerHTML = CACHE.baux.map(b => `
     <tr>
-      <td>${maisonAdresse(b.maison_id)}</td><td>${locataireNom(b.locataire_id)}</td>
+      <td>${esc(maisonAdresse(b.maison_id))}</td><td>${esc(locataireNom(b.locataire_id))}</td>
       <td>${b.date_debut}</td><td>${b.loyer_mensuel}</td><td>${badge(b.statut)}</td>
       <td class="actions-row">
         ${isGerant ? `<button class="secondary" onclick="voirContrat(${b.id})">📄 Contrat</button>` : ""}
@@ -1862,7 +1874,7 @@ function renderPaiements() {
 
   document.getElementById("paiements-list").innerHTML = paiementsMaison.map(p => `
     <tr>
-      <td>#${p.bail_id} — ${locataireNom(CACHE.baux.find(b => b.id === p.bail_id)?.locataire_id)}</td>
+      <td>#${p.bail_id} — ${esc(locataireNom(CACHE.baux.find(b => b.id === p.bail_id)?.locataire_id))}</td>
       <td>${p.mois_concerne}</td><td>${p.montant}</td><td>${p.mode.replace("_"," ")}</td><td>${badge(p.statut)}</td>
       <td class="actions-row"><button class="secondary" onclick="telechargerQuittance(${p.id})">📄 Quittance PDF</button></td>
     </tr>`).join("") || `<tr><td colspan="6" class="empty-note">Aucun paiement pour cette maison</td></tr>`;
@@ -1904,7 +1916,7 @@ function renderTickets() {
   const isGerant = ME && ME.role === "gerant";
   document.getElementById("tickets-list").innerHTML = CACHE.tickets.map(t => `
     <tr>
-      <td>${maisonAdresse(t.maison_id)}</td><td>${t.description}</td><td>${t.cout}</td><td>${badge(t.statut)}</td>
+      <td>${esc(maisonAdresse(t.maison_id))}</td><td>${esc(t.description)}</td><td>${t.cout}</td><td>${badge(t.statut)}</td>
       <td class="actions-row">
         ${isGerant && t.statut !== "resolu" ? `<button onclick="avancerTicket(${t.id}, '${t.statut === 'ouvert' ? 'en_cours' : 'resolu'}')">${t.statut === "ouvert" ? "Prendre en charge" : "Marquer résolu"}</button>` : ""}
         ${isGerant ? `<button class="danger" onclick="deleteItem('tickets', ${t.id})">Suppr.</button>` : ""}
@@ -2073,8 +2085,8 @@ function renderPieces() {
   tbody.innerHTML = pieces.map(p => `
     <tr>
       <td>${new Date(p.date_upload).toLocaleDateString("fr-FR")}</td>
-      <td><strong>${p.titre}</strong>${p.description ? `<br><span style="font-size:12px;color:var(--muted)">${p.description}</span>` : ""}</td>
-      <td>${p.maison_id ? maisonAdresse(p.maison_id) : "📁 Général"}</td>
+      <td><strong>${esc(p.titre)}</strong>${p.description ? `<br><span style="font-size:12px;color:var(--muted)">${esc(p.description)}</span>` : ""}</td>
+      <td>${p.maison_id ? esc(maisonAdresse(p.maison_id)) : "📁 Général"}</td>
       <td>${p.montant != null ? p.montant : "—"}</td>
       <td>${p.type_mime === "application/pdf" ? "📄" : "🖼️"} ${p.nom_fichier} <span style="font-size:11px;color:var(--muted)">(${formatTaille(p.taille)})</span></td>
       <td class="actions-row">
@@ -2108,7 +2120,7 @@ function renderDepenses() {
   tbody.innerHTML = CACHE.depenses.map(d => `
     <tr>
       <td>${d.date_depense}</td><td>${CATEGORIE_LABELS[d.categorie] || d.categorie}</td>
-      <td>${d.libelle}</td><td>${d.maison_id ? maisonAdresse(d.maison_id) : "—"}</td><td>${d.montant}</td>
+      <td>${esc(d.libelle)}</td><td>${d.maison_id ? esc(maisonAdresse(d.maison_id)) : "—"}</td><td>${d.montant}</td>
       <td class="actions-row"><button class="danger" onclick="deleteItem('depenses', ${d.id})">Suppr.</button></td>
     </tr>`).join("") || `<tr><td colspan="6" class="empty-note">Aucune dépense enregistrée</td></tr>`;
 }
@@ -2156,10 +2168,10 @@ function renderObservations() {
     const auteur = isGerant ? (proprietaireNom(o.proprietaire_id) || "Propriétaire") : "Vous";
     let html = `
       <div class="obs-item ${!o.lu ? 'unread' : ''}">
-        <div class="obs-meta">${auteur} · ${maison} · ${date}${!o.lu ? " · <b style='color:var(--gold)'>non lu</b>" : ""}</div>
-        <div class="obs-message">${o.message}</div>`;
+        <div class="obs-meta">${auteur} · ${esc(maison)} · ${date}${!o.lu ? " · <b style='color:var(--gold)'>non lu</b>" : ""}</div>
+        <div class="obs-message">${esc(o.message)}</div>`;
     if (o.reponse) {
-      html += `<div class="obs-reponse"><b>Réponse du gérant :</b> ${o.reponse}</div>`;
+      html += `<div class="obs-reponse"><b>Réponse du gérant :</b> ${esc(o.reponse)}</div>`;
     } else if (isGerant) {
       html += `
         <div class="obs-reply-form">
@@ -2347,7 +2359,7 @@ function renderRentabiliteBatiments(r) {
     const couleur = net > 0 ? "#0a7d3c" : (net < 0 ? "#c0392b" : "var(--muted)");
     const marge = l.rendement_pct != null ? l.rendement_pct + " %" : "—";
     return `<tr>
-      <td><strong>${l.nom}</strong></td>
+      <td><strong>${esc(l.nom)}</strong></td>
       <td>${l.nb_occupes}/${l.nb_logements} (${l.taux_occupation}%)</td>
       <td>${fmtFCFA(l.encaisse)}</td>
       <td>${fmtFCFA(l.charges)}</td>
@@ -2565,7 +2577,7 @@ function fillSelectors() {
   };
   const maisonOptions = CACHE.maisons.map(m => `<option value="${m.id}">${maisonLabel(m)}</option>`).join("");
   const batimentOptions = (CACHE.batiments || []).map(b => `<option value="${b.id}">${b.nom} (${b.adresse})</option>`).join("");
-  const locataireOptions = CACHE.locataires.filter(l => !l.archive).map(l => `<option value="${l.id}">${l.nom}</option>`).join("");
+  const locataireOptions = CACHE.locataires.filter(l => !l.archive).map(l => `<option value="${l.id}">${esc(l.nom)}</option>`).join("");
   const bailOptions = CACHE.baux.filter(b => b.statut === "actif").map(b => `<option value="${b.id}">#${b.id} — ${maisonAdresse(b.maison_id)} / ${locataireNom(b.locataire_id)}</option>`).join("");
   const proprietaireOptions = CACHE.users.filter(u => u.role === "proprietaire").map(u => `<option value="${u.id}">${u.nom}</option>`).join("");
 

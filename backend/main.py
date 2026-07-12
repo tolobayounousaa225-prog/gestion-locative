@@ -19,7 +19,7 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
@@ -445,6 +445,20 @@ class MaisonIn(BaseModel):
     loyer_reference: float = 0
     statut: str = "libre"
 
+    @field_validator("loyer_reference")
+    @classmethod
+    def loyer_reference_non_negatif(cls, v):
+        if v < 0:
+            raise ValueError("Le loyer de référence ne peut pas être négatif")
+        return v
+
+    @field_validator("nb_pieces")
+    @classmethod
+    def nb_pieces_positif(cls, v):
+        if v < 1:
+            raise ValueError("Le nombre de pièces doit être au moins 1")
+        return v
+
 
 class MaisonOut(MaisonIn):
     model_config = ConfigDict(from_attributes=True)
@@ -487,6 +501,20 @@ class BailIn(BaseModel):
     caution: float = 0
     statut: str = "actif"
 
+    @field_validator("loyer_mensuel")
+    @classmethod
+    def loyer_positif(cls, v):
+        if v <= 0:
+            raise ValueError("Le loyer mensuel doit être strictement positif")
+        return v
+
+    @field_validator("caution")
+    @classmethod
+    def caution_non_negative(cls, v):
+        if v < 0:
+            raise ValueError("La caution ne peut pas être négative")
+        return v
+
 
 class BailOut(BailIn):
     model_config = ConfigDict(from_attributes=True)
@@ -501,6 +529,13 @@ class PaiementIn(BaseModel):
     mode: str = "especes"
     statut: str = "paye"
 
+    @field_validator("montant")
+    @classmethod
+    def montant_positif(cls, v):
+        if v <= 0:
+            raise ValueError("Le montant doit être strictement positif")
+        return v
+
 
 class PaiementOut(PaiementIn):
     model_config = ConfigDict(from_attributes=True)
@@ -513,6 +548,13 @@ class TicketIn(BaseModel):
     description: str
     statut: str = "ouvert"
     cout: float = 0
+
+    @field_validator("cout")
+    @classmethod
+    def cout_non_negatif(cls, v):
+        if v < 0:
+            raise ValueError("Le coût ne peut pas être négatif")
+        return v
 
 
 class TicketOut(TicketIn):
@@ -528,6 +570,13 @@ class DepenseIn(BaseModel):
     montant: float
     date_depense: date
     maison_id: Optional[int] = None
+
+    @field_validator("montant")
+    @classmethod
+    def montant_positif(cls, v):
+        if v <= 0:
+            raise ValueError("Le montant doit être strictement positif")
+        return v
 
 
 class DepenseOut(DepenseIn):
@@ -747,8 +796,8 @@ def reset_password(data: ResetPasswordIn, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.reset_token == data.token).first()
     if not user or not user.reset_token_expiry or user.reset_token_expiry < datetime.utcnow():
         raise HTTPException(400, "Lien de réinitialisation invalide ou expiré. Refaites une demande.")
-    if len(data.new_password) < 4:
-        raise HTTPException(400, "Le mot de passe doit contenir au moins 4 caractères.")
+    if len(data.new_password) < 6:
+        raise HTTPException(400, "Le mot de passe doit contenir au moins 6 caractères.")
     user.mot_de_passe_hash = pwd_context.hash(data.new_password)
     user.reset_token = None
     user.reset_token_expiry = None
@@ -2211,6 +2260,9 @@ def finances_export(annee: int = None, type: str = "paiements", db: Session = De
         out = []
         for c in cols:
             s = "" if c is None else str(c)
+            # Neutraliser une éventuelle formule Excel/LibreOffice (protection contre l'injection CSV)
+            if s[:1] in ("=", "+", "-", "@"):
+                s = "'" + s
             if any(ch in s for ch in [",", '"', "\n"]):
                 s = '"' + s.replace('"', '""') + '"'
             out.append(s)
