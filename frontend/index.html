@@ -1881,7 +1881,10 @@ function renderPaiements() {
     <tr>
       <td>#${p.bail_id} — ${esc(locataireNom(CACHE.baux.find(b => b.id === p.bail_id)?.locataire_id))}</td>
       <td>${p.mois_concerne}</td><td>${p.montant}</td><td>${p.mode.replace("_"," ")}</td><td>${badge(p.statut)}</td>
-      <td class="actions-row"><button class="secondary" onclick="telechargerQuittance(${p.id})">📄 Quittance PDF</button></td>
+      <td class="actions-row">
+        <button class="secondary" onclick="telechargerQuittance(${p.id})">📄 Quittance PDF</button>
+        <button class="danger" onclick="deleteItem('paiements', ${p.id})">Suppr.</button>
+      </td>
     </tr>`).join("") || `<tr><td colspan="6" class="empty-note">Aucun paiement pour cette maison</td></tr>`;
 }
 

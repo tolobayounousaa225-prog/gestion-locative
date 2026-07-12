@@ -1207,6 +1207,18 @@ def create_paiement(data: PaiementIn, db: Session = Depends(get_db), current: Us
     return paiement
 
 
+@app.delete("/api/paiements/{paiement_id}")
+def delete_paiement(paiement_id: int, db: Session = Depends(get_db), current: User = Depends(require_gerant)):
+    paiement = db.query(Paiement).get(paiement_id)
+    if not paiement:
+        raise HTTPException(404, "Paiement introuvable")
+    detail = f"{paiement.montant:.0f} {DEVISE} — {paiement.mois_concerne} ({paiement.statut})"
+    db.delete(paiement)
+    db.commit()
+    journaliser(db, current, "suppression", "paiement", detail)
+    return {"ok": True}
+
+
 # ---------- Gain de temps : encaissement en masse & quittances groupées ----------
 class EncaissementMasseIn(BaseModel):
     mois_concerne: str
