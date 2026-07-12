@@ -54,6 +54,12 @@ ADMIN_NOM = os.environ.get("ADMIN_NOM", "TOURÉ")
 SOCIETE_NOM = os.environ.get("SOCIETE_NOM", "TOURÉ IMMOBILIER")
 SOCIETE_TAGLINE = os.environ.get("SOCIETE_TAGLINE", "Gestion locative professionnelle")
 SOCIETE_GERANT = os.environ.get("SOCIETE_GERANT", "M. TOURÉ")
+
+# Logo TOURÉ IMMOBILIER encodé en base64 (reutilise sur les documents PDF : quittances, contrats).
+# Decode une seule fois au chargement du module pour eviter de repeter le decodage a chaque generation.
+import base64 as _base64
+_LOGO_TOURE_B64 = "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"
+LOGO_TOURE_BYTES = _base64.b64decode(_LOGO_TOURE_B64)
 DEVISE = os.environ.get("DEVISE", "FCFA")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-3-5-haiku-20241022")
@@ -1365,12 +1371,22 @@ def generer_quittance_pdf(paiement, bail, maison, locataire, verify_url: str = "
     c.setFillColor(GOLD)
     c.rect(0, height - header_h - 2, width, 2, stroke=0, fill=1)
 
+    # Logo (encart blanc arrondi, façon cachet, à gauche du bandeau)
+    logo_size = 20 * mm
+    logo_x = margin
+    logo_y = height - header_h / 2 - logo_size / 2
     c.setFillColor(colors.white)
-    c.setFont("Helvetica-Bold", 22)
-    c.drawString(margin, height - 15 * mm, SOCIETE_NOM)
+    c.roundRect(logo_x, logo_y, logo_size, logo_size, 3, stroke=0, fill=1)
+    c.drawImage(ImageReader(io.BytesIO(LOGO_TOURE_BYTES)), logo_x + 1, logo_y + 1,
+                width=logo_size - 2, height=logo_size - 2, mask="auto", preserveAspectRatio=True)
+    text_x = logo_x + logo_size + 6
+
+    c.setFillColor(colors.white)
+    c.setFont("Helvetica-Bold", 20)
+    c.drawString(text_x, height - 15 * mm, SOCIETE_NOM)
     c.setFillColor(GOLD)
-    c.setFont("Helvetica-Oblique", 10)
-    c.drawString(margin, height - 21 * mm, SOCIETE_TAGLINE)
+    c.setFont("Helvetica-Oblique", 9)
+    c.drawString(text_x, height - 21 * mm, SOCIETE_TAGLINE)
 
     c.setFillColor(colors.white)
     c.setFont("Helvetica-Bold", 15)
@@ -2538,12 +2554,23 @@ def generer_contrat_pdf(bail, maison, locataire) -> io.BytesIO:
     c.rect(0, height - header_h, width, header_h, stroke=0, fill=1)
     c.setFillColor(GOLD)
     c.rect(0, height - header_h - 2, width, 2, stroke=0, fill=1)
+
+    # Logo (encart blanc arrondi, façon cachet, à gauche du bandeau)
+    logo_size = 20 * mm
+    logo_x = margin
+    logo_y = height - header_h / 2 - logo_size / 2
     c.setFillColor(colors.white)
-    c.setFont("Helvetica-Bold", 22)
-    c.drawString(margin, height - 15 * mm, SOCIETE_NOM)
+    c.roundRect(logo_x, logo_y, logo_size, logo_size, 3, stroke=0, fill=1)
+    c.drawImage(ImageReader(io.BytesIO(LOGO_TOURE_BYTES)), logo_x + 1, logo_y + 1,
+                width=logo_size - 2, height=logo_size - 2, mask="auto", preserveAspectRatio=True)
+    text_x = logo_x + logo_size + 6
+
+    c.setFillColor(colors.white)
+    c.setFont("Helvetica-Bold", 20)
+    c.drawString(text_x, height - 15 * mm, SOCIETE_NOM)
     c.setFillColor(GOLD)
-    c.setFont("Helvetica-Oblique", 10)
-    c.drawString(margin, height - 21 * mm, SOCIETE_TAGLINE)
+    c.setFont("Helvetica-Oblique", 9)
+    c.drawString(text_x, height - 21 * mm, SOCIETE_TAGLINE)
     c.setFillColor(colors.white)
     c.setFont("Helvetica-Bold", 15)
     c.drawRightString(width - margin, height - 14 * mm, "CONTRAT DE BAIL")
