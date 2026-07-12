@@ -868,9 +868,42 @@ def delete_user(user_id: int, db: Session = Depends(get_db), current: User = Dep
     user = db.query(User).get(user_id)
     if not user:
         raise HTTPException(404, "Utilisateur introuvable")
-    db.query(Maison).filter(Maison.proprietaire_id == user_id).update({"proprietaire_id": None, "proprietaire": None})
-    db.delete(user)
-    db.commit()
+
+    # Détacher toutes les données qui référencent cet utilisateur (clé étrangère),
+    # pour permettre sa suppression sans violer les contraintes d'intégrité
+    # (strictement appliquées par PostgreSQL en production, contrairement à SQLite en dev).
+    # On conserve les données elles-mêmes : seule la référence au compte est retirée.
+    db.query(Maison).filter(Maison.proprietaire_id == user_id).update(
+        {"proprietaire_id": None, "proprietaire": None}
+    )
+    db.query(Batiment).filter(Batiment.proprietaire_id == user_id).update(
+        {"proprietaire_id": None, "proprietaire": None}
+    )
+    db.query(PieceJustificative).filter(PieceJustificative.uploaded_by == user_id).update(
+        {"uploaded_by": None}
+    )
+    db.query(Photo).filter(Photo.uploaded_by == user_id).update(
+        {"uploaded_by": None}
+    )
+    # Le journal garde une trace lisible (utilisateur_nom) même après suppression du compte
+    db.query(JournalActivite).filter(JournalActivite.utilisateur_id == user_id).update(
+        {"utilisateur_id": None}
+    )
+    if user.role == "proprietaire":
+        # Un propriétaire peut avoir des observations (auteur obligatoire) : elles sont
+        # supprimées avec lui, la conversation n'ayant plus de sens sans son auteur.
+        db.query(Observation).filter(Observation.proprietaire_id == user_id).delete()
+
+    try:
+        db.delete(user)
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            409,
+            "Impossible de supprimer cet utilisateur : des données liées existent encore. "
+            "Contactez le support si le problème persiste."
+        )
     return {"ok": True}
 
 
@@ -938,8 +971,15 @@ def delete_batiment(batiment_id: int, db: Session = Depends(get_db), current: Us
     nb = db.query(Maison).filter(Maison.batiment_id == batiment_id).count()
     if nb > 0:
         raise HTTPException(400, f"Ce bâtiment contient {nb} logement(s). Déplacez ou supprimez-les d'abord.")
-    db.delete(batiment)
-    db.commit()
+    # Les photos rattachées au bâtiment lui-même (pas à un logement) n'empêchent pas
+    # la suppression : elles sont supprimées avec lui.
+    db.query(Photo).filter(Photo.batiment_id == batiment_id).delete()
+    try:
+        db.delete(batiment)
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "Impossible de supprimer ce bâtiment : des données liées existent encore.")
     journaliser(db, current, "suppression", "batiment", f"Bâtiment « {batiment.nom} »")
     return {"ok": True}
 
